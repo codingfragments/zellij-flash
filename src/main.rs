@@ -183,11 +183,7 @@ impl State {
     }
 
     fn render_content(&self, area: Rect, buf: &mut Buffer) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" zellij-flash ");
-        let inner = block.inner(area);
-        block.render(area, buf);
+        let inner = area;
 
         if self.lines.is_empty() {
             Paragraph::new(if self.extraction_done {
@@ -217,9 +213,6 @@ impl State {
         let gutter_w = num_w + 2; // digits + marker
         let avail_w = (inner.width as usize).saturating_sub(gutter_w);
 
-        let dim = Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM);
         let gutter_dim = Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM);
@@ -248,8 +241,7 @@ impl State {
 
                 // Truncate to available width (horizontal scroll comes in phase 4).
                 let text_display: String = text.chars().take(avail_w).collect();
-                let content =
-                    Span::styled(text_display, if is_cursor { Style::default() } else { dim });
+                let content = Span::raw(text_display);
 
                 Line::from(vec![gutter, content])
             })

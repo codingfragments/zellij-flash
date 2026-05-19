@@ -378,6 +378,41 @@ selection spans scrolled content correctly.
 
 ---
 
+### Phase 5 — nvim basic navigation
+
+**Goal:** word-motion keys (`w`, `W`, `e`, `E`) and `/` search — the most-used
+nvim navigation primitives that make cursor placement fast without needing the
+flash jump.
+
+**What to build:**
+
+#### Word motions
+
+| Key | Moves to |
+|---|---|
+| `w` | Start of next word (punctuation-aware; like nvim `w`) |
+| `W` | Start of next WORD (whitespace-separated; like nvim `W`) |
+| `e` | End of current / next word |
+| `E` | End of current / next WORD |
+
+Word definition: a run of `[a-zA-Z0-9_]` chars. WORD: any non-whitespace run.
+Motions wrap across lines (same stream model as left/right arrows). With anchor
+active, extend selection.
+
+#### `/` search
+
+- `/` enters `Mode::Search { query: String, matches: Vec<(usize, usize)>, current: usize }`.
+- User types a pattern (plain substring, case-insensitive for now).
+- All matches highlighted across all captured lines.
+- `n` / `N` jump to next / previous match (wrapping). Cursor re-centers.
+- `Enter` or `Esc` exits search mode; cursor stays at current match.
+- With anchor active, `/` + `n`/`N` extend the selection to each successive match.
+
+**Testable:** `w` moves through words, `W` through whitespace tokens, `/foo`
+highlights all occurrences, `n`/`N` navigate between them.
+
+---
+
 ## Key binding summary (inside the float)
 
 | Key | Mode | Action |

@@ -419,3 +419,9 @@ request_permission(&[
 - **Config for jump label charset**: currently hardcoded `a-zA-Z`.
 - **Config for key bindings**: currently hardcoded.
 - **Mouse support**: click to place cursor or anchor.
+- **Configurable theme colors**: all colors are currently defined as named
+  semantic constants (`THEME_SEL_BG`, `THEME_CURSOR_BG`, etc.) defaulting to
+  Catppuccin Macchiato. A future phase should expose these through the keybind
+  `configuration` map (e.g. `sel_bg "#8aadf4"`) and parse hex/named values in
+  `load()`. The semantic constant layer is already in place to make this a
+  localised change.

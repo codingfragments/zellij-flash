@@ -10,6 +10,29 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use zellij_tile::prelude::*;
 
+// ── Theme (Catppuccin Macchiato defaults) ─────────────────────────────────────
+// All colors are defined here as named semantic roles so they can be made
+// user-configurable in a future phase without hunting through render code.
+
+const C_BASE:     Color = Color::Rgb(36,  39,  58);  // #24273a — background
+const C_OVERLAY0: Color = Color::Rgb(110, 115, 141); // #6e738d — muted / dim
+const C_TEXT:     Color = Color::Rgb(202, 211, 245); // #cad3f5 — normal text / cursor bg
+const C_YELLOW:   Color = Color::Rgb(238, 212, 159); // #eed49f — gutter cursor marker
+const C_BLUE:     Color = Color::Rgb(138, 173, 244); // #8aadf4 — selection bg
+const C_TEAL:     Color = Color::Rgb(139, 213, 202); // #8bd5ca — SEL indicator
+const C_SUBTEXT1: Color = Color::Rgb(184, 192, 224); // #b8c0e0 — footer hints / bold keys
+
+// Semantic roles → palette entries (single place to remap when config lands).
+const THEME_SEL_BG:          Color = C_BLUE;
+const THEME_SEL_FG:          Color = C_BASE;
+const THEME_CURSOR_BG:       Color = C_TEXT;
+const THEME_CURSOR_FG:       Color = C_BASE;
+const THEME_GUTTER_CURSOR:   Color = C_YELLOW;
+const THEME_GUTTER_DIM:      Color = C_OVERLAY0;
+const THEME_SEL_INDICATOR:   Color = C_TEAL;
+const THEME_FOOTER_DIM:      Color = C_OVERLAY0;
+const THEME_FOOTER_KEY:      Color = C_SUBTEXT1;
+
 // ── Profile ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
@@ -379,7 +402,7 @@ impl State {
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
         if area.width < 20 || area.height < 5 {
             Paragraph::new("too small")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(THEME_FOOTER_DIM))
                 .render(area, buf);
             return;
         }
@@ -402,7 +425,7 @@ impl State {
             } else {
                 "Loading…"
             })
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(THEME_FOOTER_DIM))
             .render(inner, buf);
             return;
         }
@@ -423,8 +446,8 @@ impl State {
 
         let sel = self.selection_range();
 
-        let gutter_dim = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
-        let gutter_cursor_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let gutter_dim = Style::default().fg(THEME_GUTTER_DIM).add_modifier(Modifier::DIM);
+        let gutter_cursor_style = Style::default().fg(THEME_GUTTER_CURSOR).add_modifier(Modifier::BOLD);
 
         let content_lines: Vec<Line<'static>> = visible
             .iter()
@@ -459,9 +482,9 @@ impl State {
     }
 
     fn render_footer(&self, area: Rect, buf: &mut Buffer) {
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        let dim = Style::default().fg(Color::DarkGray);
-        let sel_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let bold = Style::default().fg(THEME_FOOTER_KEY).add_modifier(Modifier::BOLD);
+        let dim = Style::default().fg(THEME_FOOTER_DIM);
+        let sel_style = Style::default().fg(THEME_SEL_INDICATOR).add_modifier(Modifier::BOLD);
 
         let profile_label = self.profiles
             .get(self.current_profile)
@@ -590,8 +613,8 @@ fn build_line_spans(
     sel: Option<(usize, usize)>,
     cursor_col: Option<usize>,
 ) -> Vec<Span<'static>> {
-    let sel_style    = Style::default().bg(Color::LightBlue).fg(Color::Black);
-    let cursor_style = Style::default().bg(Color::White).fg(Color::Black);
+    let sel_style    = Style::default().bg(THEME_SEL_BG).fg(THEME_SEL_FG);
+    let cursor_style = Style::default().bg(THEME_CURSOR_BG).fg(THEME_CURSOR_FG);
 
     let char_style = |i: usize| -> Style {
         if cursor_col == Some(i) {

@@ -1178,7 +1178,7 @@ impl State {
         if self.line_labels_unified {
             // Split jump_labels in half: first half → below, second half → above.
             let n = self.jump_labels.len();
-            let mid = (n + 1) / 2; // first half gets the extra char if odd
+            let mid = n.div_ceil(2); // first half gets the extra char if odd
             let below_pool = &self.jump_labels[..mid];
             let above_pool = &self.jump_labels[mid..];
             for (line, &lc) in below.zip(below_pool.iter()) {

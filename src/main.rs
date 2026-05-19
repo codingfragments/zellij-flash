@@ -405,8 +405,10 @@ impl State {
         if avail == 0 { return; }
         if self.cursor.1 < self.scroll_x {
             self.scroll_x = self.cursor.1;
-        } else if self.cursor.1 >= self.scroll_x + avail {
-            self.scroll_x = self.cursor.1 + 1 - avail;
+        } else if self.cursor.1 + 1 >= self.scroll_x + avail {
+            // +1 accounts for the `…` indicator occupying the last display column
+            // when the line overflows — scroll before the cursor lands on it.
+            self.scroll_x = self.cursor.1 + 2 - avail;
         }
     }
 

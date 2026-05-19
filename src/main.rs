@@ -637,14 +637,20 @@ impl State {
         let vis_end = (self.scroll_y + self.content_rows).min(self.lines.len());
         let (cline, _) = self.cursor;
 
-        let mut lines: Vec<usize> = (vis_start..vis_end).collect();
-        // Sort by distance from cursor row.
-        lines.sort_by_key(|&l| (l as isize - cline as isize).unsigned_abs());
+        // Lines below cursor: a (nearest) → z (furthest).
+        let below = (vis_start..vis_end).filter(|&l| l > cline);
+        // Lines above cursor: A (nearest) → Z (furthest) — reverse order so
+        // the immediately-adjacent line gets 'A'.
+        let above = (vis_start..cline.min(vis_end)).rev();
 
-        lines.into_iter()
-            .zip(LABEL_CHARS.iter().copied())
-            .map(|(line, label)| (line, label))
-            .collect()
+        let mut labels: Vec<(usize, char)> = Vec::new();
+        for (line, lc) in below.zip('a'..='z') {
+            labels.push((line, lc));
+        }
+        for (line, lc) in above.zip('A'..='Z') {
+            labels.push((line, lc));
+        }
+        labels
     }
 
     fn handle_key_line_jump(&mut self, key: KeyWithModifier, labels: Vec<(usize, char)>) -> bool {

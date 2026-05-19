@@ -13,21 +13,29 @@ pub fn pick(manifest: &PaneManifest, hint: Option<u32>, active_tab: Option<usize
     let mut first_tiled: Option<u32> = None;
     let mut first_any: Option<u32> = None;
 
-    let tab_panes: Box<dyn Iterator<Item = &Vec<zellij_tile::prelude::PaneInfo>>> =
-        match active_tab {
-            Some(idx) => match manifest.panes.get(&idx) {
-                Some(panes) => Box::new(std::iter::once(panes)),
-                None => Box::new(manifest.panes.values()),
-            },
+    let tab_panes: Box<dyn Iterator<Item = &Vec<zellij_tile::prelude::PaneInfo>>> = match active_tab
+    {
+        Some(idx) => match manifest.panes.get(&idx) {
+            Some(panes) => Box::new(std::iter::once(panes)),
             None => Box::new(manifest.panes.values()),
-        };
+        },
+        None => Box::new(manifest.panes.values()),
+    };
 
     for panes in tab_panes {
         for pane in panes {
-            if pane.is_plugin { continue; }
-            if pane.is_focused { focused_non_plugin = Some(pane.id); }
-            if Some(pane.id) == hint { hint_exists = true; }
-            if first_any.is_none() { first_any = Some(pane.id); }
+            if pane.is_plugin {
+                continue;
+            }
+            if pane.is_focused {
+                focused_non_plugin = Some(pane.id);
+            }
+            if Some(pane.id) == hint {
+                hint_exists = true;
+            }
+            if first_any.is_none() {
+                first_any = Some(pane.id);
+            }
             if first_tiled.is_none() && !pane.is_floating && !pane.is_suppressed {
                 first_tiled = Some(pane.id);
             }

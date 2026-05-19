@@ -10,37 +10,71 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use zellij_tile::prelude::*;
 
-// ── Theme (Catppuccin Macchiato defaults) ─────────────────────────────────────
-// All colors are defined here as named semantic roles so they can be made
-// user-configurable in a future phase without hunting through render code.
+// ── Theme ─────────────────────────────────────────────────────────────────────
+// Runtime color theme. Defaults to Catppuccin Macchiato. All fields can be
+// overridden via `color_*` keys in the keybind configuration block.
 
-const C_BASE:     Color = Color::Rgb(36,  39,  58);  // #24273a — background
-const C_OVERLAY0: Color = Color::Rgb(110, 115, 141); // #6e738d — muted / dim
-const C_TEXT:     Color = Color::Rgb(202, 211, 245); // #cad3f5 — normal text / cursor bg
-const C_YELLOW:   Color = Color::Rgb(238, 212, 159); // #eed49f — gutter cursor marker
-const C_BLUE:     Color = Color::Rgb(138, 173, 244); // #8aadf4 — selection bg
-const C_TEAL:     Color = Color::Rgb(139, 213, 202); // #8bd5ca — SEL indicator
-const C_SUBTEXT1: Color = Color::Rgb(184, 192, 224); // #b8c0e0 — footer hints / bold keys
-const C_PEACH:    Color = Color::Rgb(245, 169, 127); // #f5a97f — jump label bg
-const C_RED:      Color = Color::Rgb(237, 135, 150); // #ed8796 — jump match highlight
-const C_GREEN:    Color = Color::Rgb(166, 218, 149); // #a6da95 — search match bg
+/// Parse a "#rrggbb" or "rrggbb" hex string into a ratatui Color.
+fn parse_hex_color(s: &str) -> Option<Color> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 { return None; }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
+}
 
-// Semantic roles → palette entries (single place to remap when config lands).
-const THEME_SEL_BG:              Color = C_BLUE;
-const THEME_SEL_FG:              Color = C_BASE;
-const THEME_CURSOR_BG:           Color = C_TEXT;
-const THEME_CURSOR_FG:           Color = C_BASE;
-const THEME_GUTTER_CURSOR:       Color = C_YELLOW;
-const THEME_GUTTER_DIM:          Color = C_OVERLAY0;
-const THEME_SEL_INDICATOR:       Color = C_TEAL;
-const THEME_FOOTER_DIM:          Color = C_OVERLAY0;
-const THEME_FOOTER_KEY:          Color = C_SUBTEXT1;
-const THEME_JUMP_LABEL_BG:       Color = C_PEACH;
-const THEME_JUMP_LABEL_FG:       Color = C_BASE;
-const THEME_SEARCH_MATCH_BG:     Color = C_GREEN;
-const THEME_SEARCH_CURRENT_BG:   Color = C_YELLOW;
-const THEME_SEARCH_FG:           Color = C_BASE;
-const THEME_JUMP_MATCH_FG:   Color = C_RED;
+#[derive(Debug, Clone)]
+struct Theme {
+    sel_bg:            Color,
+    sel_fg:            Color,
+    cursor_bg:         Color,
+    cursor_fg:         Color,
+    gutter_cursor:     Color,
+    gutter_dim:        Color,
+    sel_indicator:     Color,
+    footer_dim:        Color,
+    footer_key:        Color,
+    jump_label_bg:     Color,
+    jump_label_fg:     Color,
+    jump_match_fg:     Color,
+    search_match_bg:   Color,
+    search_current_bg: Color,
+    search_fg:         Color,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        // Catppuccin Macchiato palette
+        let base     = Color::Rgb(36,  39,  58);  // #24273a
+        let overlay0 = Color::Rgb(110, 115, 141); // #6e738d
+        let text     = Color::Rgb(202, 211, 245); // #cad3f5
+        let yellow   = Color::Rgb(238, 212, 159); // #eed49f
+        let blue     = Color::Rgb(138, 173, 244); // #8aadf4
+        let teal     = Color::Rgb(139, 213, 202); // #8bd5ca
+        let subtext1 = Color::Rgb(184, 192, 224); // #b8c0e0
+        let peach    = Color::Rgb(245, 169, 127); // #f5a97f
+        let red      = Color::Rgb(237, 135, 150); // #ed8796
+        let green    = Color::Rgb(166, 218, 149); // #a6da95
+        Self {
+            sel_bg:            blue,
+            sel_fg:            base,
+            cursor_bg:         text,
+            cursor_fg:         base,
+            gutter_cursor:     yellow,
+            gutter_dim:        overlay0,
+            sel_indicator:     teal,
+            footer_dim:        overlay0,
+            footer_key:        subtext1,
+            jump_label_bg:     peach,
+            jump_label_fg:     base,
+            jump_match_fg:     red,
+            search_match_bg:   green,
+            search_current_bg: yellow,
+            search_fg:         base,
+        }
+    }
+}
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 
@@ -136,6 +170,7 @@ struct State {
     content_cols: usize,
     /// Size string from keybind config ("90%x85%"), applied once on open.
     pending_size: Option<String>,
+    theme: Theme,
     mode: Mode,
     /// Transient status message (warning, confirmation). Cleared on next keypress.
     message: Option<String>,
@@ -159,6 +194,7 @@ impl Default for State {
             scroll_x: 0,
             content_rows: 24,
             content_cols: 80,
+            theme: Theme::default(),
             mode: Mode::Normal,
             message: None,
             pending_size: None,
@@ -189,11 +225,34 @@ impl ZellijPlugin for State {
         if let Some(p) = configuration.get("profiles") {
             self.profiles = parse_profiles(p);
         }
-
-        // Store size string for use once ChangeApplicationState is granted.
         if let Some(size) = configuration.get("size") {
             self.pending_size = Some(size.clone());
         }
+
+        // Override individual theme colors from keybind config.
+        // Each key is "color_<role>" with a "#rrggbb" hex value.
+        macro_rules! apply_color {
+            ($key:expr, $field:expr) => {
+                if let Some(v) = configuration.get($key) {
+                    if let Some(c) = parse_hex_color(v) { $field = c; }
+                }
+            };
+        }
+        apply_color!("color_sel_bg",            self.theme.sel_bg);
+        apply_color!("color_sel_fg",            self.theme.sel_fg);
+        apply_color!("color_cursor_bg",         self.theme.cursor_bg);
+        apply_color!("color_cursor_fg",         self.theme.cursor_fg);
+        apply_color!("color_gutter_mark",       self.theme.gutter_cursor);
+        apply_color!("color_gutter_dim",        self.theme.gutter_dim);
+        apply_color!("color_sel_label",         self.theme.sel_indicator);
+        apply_color!("color_footer_dim",        self.theme.footer_dim);
+        apply_color!("color_footer_key",        self.theme.footer_key);
+        apply_color!("color_jump_label_bg",     self.theme.jump_label_bg);
+        apply_color!("color_jump_label_fg",     self.theme.jump_label_fg);
+        apply_color!("color_jump_match_fg",     self.theme.jump_match_fg);
+        apply_color!("color_search_match_bg",   self.theme.search_match_bg);
+        apply_color!("color_search_current_bg", self.theme.search_current_bg);
+        apply_color!("color_search_fg",         self.theme.search_fg);
     }
 
     fn update(&mut self, event: Event) -> bool {
@@ -989,7 +1048,7 @@ impl State {
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
         if area.width < 20 || area.height < 5 {
             Paragraph::new("too small")
-                .style(Style::default().fg(THEME_FOOTER_DIM))
+                .style(Style::default().fg(self.theme.footer_dim))
                 .render(area, buf);
             return;
         }
@@ -1012,7 +1071,7 @@ impl State {
             } else {
                 "Loading…"
             })
-            .style(Style::default().fg(THEME_FOOTER_DIM))
+            .style(Style::default().fg(self.theme.footer_dim))
             .render(inner, buf);
             return;
         }
@@ -1049,8 +1108,8 @@ impl State {
                 (&[][..], 0, 0)
             };
 
-        let gutter_dim = Style::default().fg(THEME_GUTTER_DIM).add_modifier(Modifier::DIM);
-        let gutter_cursor_style = Style::default().fg(THEME_GUTTER_CURSOR).add_modifier(Modifier::BOLD);
+        let gutter_dim = Style::default().fg(self.theme.gutter_dim).add_modifier(Modifier::DIM);
+        let gutter_cursor_style = Style::default().fg(self.theme.gutter_cursor).add_modifier(Modifier::BOLD);
 
         let content_lines: Vec<Line<'static>> = visible
             .iter()
@@ -1066,8 +1125,8 @@ impl State {
                         (
                             format!("{:>w$}  ", lc, w = num_w),
                             Style::default()
-                                .bg(THEME_JUMP_LABEL_BG)
-                                .fg(THEME_JUMP_LABEL_FG)
+                                .bg(self.theme.jump_label_bg)
+                                .fg(self.theme.jump_label_fg)
                                 .add_modifier(Modifier::BOLD),
                         )
                     } else {
@@ -1129,14 +1188,14 @@ impl State {
 
                 let mut spans = vec![gutter];
                 if has_left_overflow {
-                    spans.push(Span::styled("…", Style::default().fg(THEME_FOOTER_DIM)));
+                    spans.push(Span::styled("…", Style::default().fg(self.theme.footer_dim)));
                 }
                 spans.extend(build_line_spans(
                     &chars, sel_range, cur_col, &line_labels, typed_len,
-                    &line_search, search_qlen,
+                    &line_search, search_qlen, &self.theme,
                 ));
                 if has_right_overflow {
-                    spans.push(Span::styled("…", Style::default().fg(THEME_FOOTER_DIM)));
+                    spans.push(Span::styled("…", Style::default().fg(self.theme.footer_dim)));
                 }
                 Line::from(spans)
             })
@@ -1146,9 +1205,9 @@ impl State {
     }
 
     fn render_footer(&self, area: Rect, buf: &mut Buffer) {
-        let bold = Style::default().fg(THEME_FOOTER_KEY).add_modifier(Modifier::BOLD);
-        let dim = Style::default().fg(THEME_FOOTER_DIM);
-        let sel_style = Style::default().fg(THEME_SEL_INDICATOR).add_modifier(Modifier::BOLD);
+        let bold = Style::default().fg(self.theme.footer_key).add_modifier(Modifier::BOLD);
+        let dim = Style::default().fg(self.theme.footer_dim);
+        let sel_style = Style::default().fg(self.theme.sel_indicator).add_modifier(Modifier::BOLD);
 
         let profile_label = self.profiles
             .get(self.current_profile)
@@ -1193,7 +1252,7 @@ impl State {
                     Span::raw(" "),
                     Span::styled(
                         format!("/{query}{count_str}"),
-                        Style::default().fg(THEME_SEARCH_CURRENT_BG).add_modifier(Modifier::BOLD),
+                        Style::default().fg(self.theme.search_current_bg).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
                     Span::styled("n", bold), Span::raw(":next  "),
@@ -1206,7 +1265,7 @@ impl State {
                     Span::raw(" "),
                     Span::styled(
                         format!("/{query}█{count_str}"),
-                        Style::default().fg(THEME_SEARCH_CURRENT_BG).add_modifier(Modifier::BOLD),
+                        Style::default().fg(self.theme.search_current_bg).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
                     Span::styled("Enter", bold), Span::raw(":confirm  "),
@@ -1218,7 +1277,7 @@ impl State {
                 Span::raw(" "),
                 Span::styled(
                     format!("line jump — {} lines labeled", labels.len()),
-                    Style::default().fg(THEME_JUMP_LABEL_BG).add_modifier(Modifier::BOLD),
+                    Style::default().fg(self.theme.jump_label_bg).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::styled("Esc", bold),
@@ -1234,7 +1293,7 @@ impl State {
             };
             Line::from(vec![
                 Span::raw(" "),
-                Span::styled(hint, Style::default().fg(THEME_JUMP_LABEL_BG).add_modifier(Modifier::BOLD)),
+                Span::styled(hint, Style::default().fg(self.theme.jump_label_bg).add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
                 Span::styled("Esc", bold),
                 Span::raw(":cancel"),
@@ -1244,7 +1303,7 @@ impl State {
                 Span::raw(" "),
                 Span::styled(
                     self.message.clone().unwrap_or_default(),
-                    Style::default().fg(THEME_SEL_INDICATOR).add_modifier(Modifier::BOLD),
+                    Style::default().fg(self.theme.sel_indicator).add_modifier(Modifier::BOLD),
                 ),
             ])
         } else if self.anchor.is_some() {
@@ -1265,7 +1324,7 @@ impl State {
                 spans.push(Span::raw("    "));
                 spans.push(Span::styled(
                     msg.clone(),
-                    Style::default().fg(THEME_SEL_INDICATOR),
+                    Style::default().fg(self.theme.sel_indicator),
                 ));
             }
             Line::from(spans)
@@ -1293,7 +1352,7 @@ impl State {
                 spans.push(Span::raw("    "));
                 spans.push(Span::styled(
                     msg.clone(),
-                    Style::default().fg(THEME_SEL_INDICATOR),
+                    Style::default().fg(self.theme.sel_indicator),
                 ));
             }
             Line::from(spans)
@@ -1411,14 +1470,15 @@ fn build_line_spans(
     typed_len: usize,
     search_matches: &[(usize, bool)], // (display_col, is_current)
     search_len: usize,
+    theme: &Theme,
 ) -> Vec<Span<'static>> {
-    let sel_style           = Style::default().bg(THEME_SEL_BG).fg(THEME_SEL_FG);
-    let cursor_style        = Style::default().bg(THEME_CURSOR_BG).fg(THEME_CURSOR_FG);
-    let label_style         = Style::default().bg(THEME_JUMP_LABEL_BG).fg(THEME_JUMP_LABEL_FG)
+    let sel_style           = Style::default().bg(theme.sel_bg).fg(theme.sel_fg);
+    let cursor_style        = Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg);
+    let label_style         = Style::default().bg(theme.jump_label_bg).fg(theme.jump_label_fg)
                                   .add_modifier(Modifier::BOLD);
-    let match_style         = Style::default().fg(THEME_JUMP_MATCH_FG).add_modifier(Modifier::BOLD);
-    let search_style        = Style::default().bg(THEME_SEARCH_MATCH_BG).fg(THEME_SEARCH_FG);
-    let search_cur_style    = Style::default().bg(THEME_SEARCH_CURRENT_BG).fg(THEME_SEARCH_FG)
+    let match_style         = Style::default().fg(theme.jump_match_fg).add_modifier(Modifier::BOLD);
+    let search_style        = Style::default().bg(theme.search_match_bg).fg(theme.search_fg);
+    let search_cur_style    = Style::default().bg(theme.search_current_bg).fg(theme.search_fg)
                                   .add_modifier(Modifier::BOLD);
 
     let mut cells: Vec<(char, Style)> = chars

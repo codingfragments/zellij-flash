@@ -16,9 +16,27 @@ bind "S" {
         profiles "viewport,200,2000"
 
         // Float dimensions. Format: "WIDTHxHEIGHT".
-        // Accepts percentages ("90%x85%") or absolute cell counts ("200x50").
+        // Accepts percentages ("90%x90%") or absolute cell counts ("200x50").
         // Percentage widths are auto-centered horizontally.
-        size "90%x85%"
+        size "90%x90%"
+
+        // Theme colors — hex strings ("#rrggbb" or "rrggbb").
+        // All default to Catppuccin Macchiato. Omit any key to keep the default.
+        color_sel_bg          "#8aadf4"  // selection background          (Blue)
+        color_sel_fg          "#24273a"  // selection foreground          (Base)
+        color_cursor_bg       "#cad3f5"  // cursor cell background        (Text)
+        color_cursor_fg       "#24273a"  // cursor cell foreground        (Base)
+        color_gutter_mark     "#eed49f"  // cursor-row gutter marker      (Yellow)
+        color_gutter_dim      "#6e738d"  // other gutter numbers          (Overlay0)
+        color_sel_label       "#8bd5ca"  // "SEL N lines" footer label    (Teal)
+        color_footer_dim      "#6e738d"  // footer status text            (Overlay0)
+        color_footer_key      "#b8c0e0"  // footer key hint labels        (Subtext1)
+        color_jump_label_bg   "#f5a97f"  // jump label background         (Peach)
+        color_jump_label_fg   "#24273a"  // jump label foreground         (Base)
+        color_jump_match_fg   "#ed8796"  // jump match prefix highlight   (Red)
+        color_search_match_bg "#a6da95"  // search match background       (Green)
+        color_search_current_bg "#eed49f" // current search match bg      (Yellow)
+        color_search_fg       "#24273a"  // search match foreground       (Base)
     };
     SwitchToMode "locked"
 }
@@ -30,40 +48,23 @@ bind "S" {
 |---|---|---|
 | `profiles` | `"viewport,200,2000"` | Comma-separated depth profiles. `viewport` = visible area only; a positive integer = that many scrollback lines. At least one profile required. |
 | `size` | _(Zellij default float size)_ | Float dimensions as `WIDTHxHEIGHT`. Percentages or absolute cell counts. Omit to use Zellij's default float placement. |
+| `color_sel_bg` | `"#8aadf4"` | Selection highlight background. |
+| `color_sel_fg` | `"#24273a"` | Selection highlight foreground. |
+| `color_cursor_bg` | `"#cad3f5"` | Cursor cell background. |
+| `color_cursor_fg` | `"#24273a"` | Cursor cell foreground. |
+| `color_gutter_mark` | `"#eed49f"` | Cursor-row gutter marker color. |
+| `color_gutter_dim` | `"#6e738d"` | Non-cursor gutter number color. |
+| `color_sel_label` | `"#8bd5ca"` | "SEL N lines" footer indicator. |
+| `color_footer_dim` | `"#6e738d"` | Footer status/dim text. |
+| `color_footer_key` | `"#b8c0e0"` | Footer key hint labels. |
+| `color_jump_label_bg` | `"#f5a97f"` | Jump label background. |
+| `color_jump_label_fg` | `"#24273a"` | Jump label foreground. |
+| `color_jump_match_fg` | `"#ed8796"` | Jump matched-prefix highlight color. |
+| `color_search_match_bg` | `"#a6da95"` | Non-current search match background. |
+| `color_search_current_bg` | `"#eed49f"` | Current search match background. |
+| `color_search_fg` | `"#24273a"` | Search match foreground. |
 
 ## Future configuration (not yet implemented)
-
-The following options are planned but not yet available. This section will be
-updated as each is added.
-
-### Theme colors
-
-All UI colors default to **Catppuccin Macchiato**. Future releases will allow
-overriding individual roles via the configuration block:
-
-```kdl
-// Planned — not yet available
-bind "S" {
-    LaunchOrFocusPlugin "file:~/.config/zellij/plugins/zellij_flash.wasm" {
-        floating true
-        profiles "viewport,200,2000"
-        size "90%x85%"
-
-        // Color roles — hex strings, e.g. "#8aadf4"
-        // Defaults shown are Catppuccin Macchiato values.
-        color_sel_bg      "#8aadf4"  // selection background (Blue)
-        color_sel_fg      "#24273a"  // selection foreground (Base)
-        color_cursor_bg   "#cad3f5"  // cursor cell background (Text)
-        color_cursor_fg   "#24273a"  // cursor cell foreground (Base)
-        color_gutter_mark "#eed49f"  // cursor row gutter marker (Yellow)
-        color_gutter_dim  "#6e738d"  // other gutter numbers (Overlay0)
-        color_sel_label   "#8bd5ca"  // "SEL N lines" footer indicator (Teal)
-        color_footer_dim  "#6e738d"  // footer status text (Overlay0)
-        color_footer_key  "#b8c0e0"  // footer key hint labels (Subtext1)
-    };
-    SwitchToMode "locked"
-}
-```
 
 ### Key bindings
 

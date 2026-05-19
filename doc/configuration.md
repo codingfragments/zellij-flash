@@ -15,6 +15,14 @@ bind "S" {
         // First profile is active on open.
         profiles "viewport,200,2000"
 
+        // Characters used as jump labels for the s word-jump.
+        // Any printable non-whitespace chars; duplicates removed; order preserved.
+        // Default: a-z then A-Z (52 labels). Shorten or restrict to taste.
+        // Examples:
+        //   labels "asdfjkl;"          -- home-row only (8 labels)
+        //   labels "abcdefghijklmnopqrstuvwxyz"  -- lowercase only (26 labels)
+        labels "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
         // Float dimensions. Format: "WIDTHxHEIGHT".
         // Accepts percentages ("90%x90%") or absolute cell counts ("200x50").
         // Percentage widths are auto-centered horizontally.
@@ -48,6 +56,7 @@ bind "S" {
 |---|---|---|
 | `profiles` | `"viewport,200,2000"` | Comma-separated depth profiles. `viewport` = visible area only; a positive integer = that many scrollback lines. At least one profile required. |
 | `size` | _(Zellij default float size)_ | Float dimensions as `WIDTHxHEIGHT`. Percentages or absolute cell counts. Omit to use Zellij's default float placement. |
+| `labels` | `"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"` | Characters used as jump labels for `s` word-jump. Any printable non-whitespace chars; duplicates silently removed; order preserved. Fewer labels means the jump mode requires more typed chars before labels appear. Note: line-jump (`l`) always uses its own directional scheme (lowercase below cursor, uppercase above) regardless of this setting. |
 | `color_sel_bg` | `"#8aadf4"` | Selection highlight background. |
 | `color_sel_fg` | `"#24273a"` | Selection highlight foreground. |
 | `color_cursor_bg` | `"#cad3f5"` | Cursor cell background. |

@@ -171,6 +171,10 @@ struct State {
     extraction_done: bool,
     profiles: Vec<Profile>,
     current_profile: usize,
+    /// Label characters used for word-jump (`s`). Configured via the `labels`
+    /// keybind key. Defaults to a-z then A-Z. Line-jump always uses its own
+    /// directional split (lowercase below, uppercase above) regardless of this.
+    jump_labels: Vec<char>,
     /// Logical cursor position: (line index, char col) into `lines`.
     cursor: (usize, usize),
     /// Selection anchor. When Some, the selection spans from anchor to cursor
@@ -204,6 +208,7 @@ impl Default for State {
             extraction_done: false,
             profiles: default_profiles(),
             current_profile: 0,
+            jump_labels: LABEL_CHARS.to_vec(),
             cursor: (0, 0),
             anchor: None,
             scroll_y: 0,
@@ -243,6 +248,18 @@ impl ZellijPlugin for State {
         }
         if let Some(size) = configuration.get("size") {
             self.pending_size = Some(size.clone());
+        }
+        if let Some(lbls) = configuration.get("labels") {
+            // Keep printable non-whitespace chars, deduplicate, preserve order.
+            let mut parsed: Vec<char> = Vec::new();
+            for c in lbls.chars() {
+                if !c.is_whitespace() && !c.is_control() && !parsed.contains(&c) {
+                    parsed.push(c);
+                }
+            }
+            if !parsed.is_empty() {
+                self.jump_labels = parsed;
+            }
         }
 
         // Override individual theme colors from keybind config.
@@ -594,6 +611,21 @@ impl State {
                 self.move_down();
                 true
             }
+            BareKey::Left if only_shift => {
+                // Pan viewport left without moving cursor.
+                self.scroll_x = self.scroll_x.saturating_sub(1);
+                true
+            }
+            BareKey::Right if only_shift => {
+                // Pan viewport right without moving cursor.
+                let max_x = self.lines.iter()
+                    .map(|l| l.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .saturating_sub(self.avail_w().saturating_sub(1));
+                self.scroll_x = (self.scroll_x + 1).min(max_x);
+                true
+            }
             BareKey::Left => {
                 self.move_left();
                 true
@@ -800,7 +832,7 @@ impl State {
             }
         }
 
-        if matches.is_empty() || matches.len() > LABEL_CHARS.len() {
+        if matches.is_empty() || matches.len() > self.jump_labels.len() {
             return Vec::new();
         }
 
@@ -817,7 +849,7 @@ impl State {
             .chars()
             .flat_map(|c| [c.to_ascii_lowercase(), c.to_ascii_uppercase()])
             .collect();
-        let pool: Vec<char> = LABEL_CHARS
+        let pool: Vec<char> = self.jump_labels
             .iter()
             .filter(|&&c| !exclude.contains(&c))
             .copied()

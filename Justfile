@@ -36,12 +36,14 @@ dev-fast: build-dev
 test:
     cargo test
 
-# Run fmt + clippy + test + wasm build (full CI check)
+# Run fmt + clippy + test + wasm build (mirrors CI exactly)
 check:
     cargo fmt -- --check
     cargo clippy --all-targets -- -D warnings
-    cargo test
-    cargo build --release --target wasm32-wasip1
+    cargo test --locked
+    cargo build --locked --release --target wasm32-wasip1
+    @wc -c < target/wasm32-wasip1/release/zellij_flash.wasm | \
+     awk 'BEGIN{lim=1536000} {printf "Binary: %d bytes (limit %d)\n",$1,lim; if($1>lim){print "ERROR: wasm exceeds 1.5 MB budget";exit 1}}'
 
 # Format source
 fmt:

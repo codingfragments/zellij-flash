@@ -17,7 +17,9 @@ use zellij_tile::prelude::*;
 /// Parse a "#rrggbb" or "rrggbb" hex string into a ratatui Color.
 fn parse_hex_color(s: &str) -> Option<Color> {
     let s = s.trim().trim_start_matches('#');
-    if s.len() != 6 { return None; }
+    if s.len() != 6 {
+        return None;
+    }
     let r = u8::from_str_radix(&s[0..2], 16).ok()?;
     let g = u8::from_str_radix(&s[2..4], 16).ok()?;
     let b = u8::from_str_radix(&s[4..6], 16).ok()?;
@@ -26,52 +28,52 @@ fn parse_hex_color(s: &str) -> Option<Color> {
 
 #[derive(Debug, Clone)]
 struct Theme {
-    sel_bg:            Color,
-    sel_fg:            Color,
-    cursor_bg:         Color,
-    cursor_fg:         Color,
-    gutter_cursor:     Color,
-    gutter_dim:        Color,
-    sel_indicator:     Color,
-    footer_dim:        Color,
-    footer_key:        Color,
-    jump_label_bg:     Color,
-    jump_label_fg:     Color,
-    jump_match_fg:     Color,
-    search_match_bg:   Color,
+    sel_bg: Color,
+    sel_fg: Color,
+    cursor_bg: Color,
+    cursor_fg: Color,
+    gutter_cursor: Color,
+    gutter_dim: Color,
+    sel_indicator: Color,
+    footer_dim: Color,
+    footer_key: Color,
+    jump_label_bg: Color,
+    jump_label_fg: Color,
+    jump_match_fg: Color,
+    search_match_bg: Color,
     search_current_bg: Color,
-    search_fg:         Color,
+    search_fg: Color,
 }
 
 impl Default for Theme {
     fn default() -> Self {
         // Catppuccin Macchiato palette
-        let base     = Color::Rgb(36,  39,  58);  // #24273a
+        let base = Color::Rgb(36, 39, 58); // #24273a
         let overlay0 = Color::Rgb(110, 115, 141); // #6e738d
-        let text     = Color::Rgb(202, 211, 245); // #cad3f5
-        let yellow   = Color::Rgb(238, 212, 159); // #eed49f
-        let blue     = Color::Rgb(138, 173, 244); // #8aadf4
-        let teal     = Color::Rgb(139, 213, 202); // #8bd5ca
+        let text = Color::Rgb(202, 211, 245); // #cad3f5
+        let yellow = Color::Rgb(238, 212, 159); // #eed49f
+        let blue = Color::Rgb(138, 173, 244); // #8aadf4
+        let teal = Color::Rgb(139, 213, 202); // #8bd5ca
         let subtext1 = Color::Rgb(184, 192, 224); // #b8c0e0
-        let peach    = Color::Rgb(245, 169, 127); // #f5a97f
-        let red      = Color::Rgb(237, 135, 150); // #ed8796
-        let green    = Color::Rgb(166, 218, 149); // #a6da95
+        let peach = Color::Rgb(245, 169, 127); // #f5a97f
+        let red = Color::Rgb(237, 135, 150); // #ed8796
+        let green = Color::Rgb(166, 218, 149); // #a6da95
         Self {
-            sel_bg:            blue,
-            sel_fg:            base,
-            cursor_bg:         text,
-            cursor_fg:         base,
-            gutter_cursor:     yellow,
-            gutter_dim:        overlay0,
-            sel_indicator:     teal,
-            footer_dim:        overlay0,
-            footer_key:        subtext1,
-            jump_label_bg:     peach,
-            jump_label_fg:     base,
-            jump_match_fg:     red,
-            search_match_bg:   green,
+            sel_bg: blue,
+            sel_fg: base,
+            cursor_bg: text,
+            cursor_fg: base,
+            gutter_cursor: yellow,
+            gutter_dim: overlay0,
+            sel_indicator: teal,
+            footer_dim: overlay0,
+            footer_key: subtext1,
+            jump_label_bg: peach,
+            jump_label_fg: base,
+            jump_match_fg: red,
+            search_match_bg: green,
             search_current_bg: yellow,
-            search_fg:         base,
+            search_fg: base,
         }
     }
 }
@@ -101,7 +103,10 @@ fn parse_profiles(s: &str) -> Vec<Profile> {
             if p.eq_ignore_ascii_case("viewport") {
                 Some(Profile::Viewport)
             } else {
-                p.parse::<usize>().ok().filter(|&n| n > 0).map(Profile::Lines)
+                p.parse::<usize>()
+                    .ok()
+                    .filter(|&n| n > 0)
+                    .map(Profile::Lines)
             }
         })
         .collect();
@@ -120,10 +125,9 @@ fn default_profiles() -> Vec<Profile> {
 /// Label pool: a-z then A-Z. 52 entries; indices used to assign labels by
 /// sorted distance from cursor.
 const LABEL_CHARS: &[char] = &[
-    'a','b','c','d','e','f','g','h','i','j','k','l','m',
-    'n','o','p','q','r','s','t','u','v','w','x','y','z',
-    'A','B','C','D','E','F','G','H','I','J','K','L','M',
-    'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+    'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ];
 
 #[derive(Debug, Clone)]
@@ -131,17 +135,29 @@ enum Mode {
     Normal,
     /// Word-jump: user types a prefix, labels appear on visible matches.
     /// `labels` = (line, col, label_char), sorted by distance from cursor.
-    Jump { typed: String, labels: Vec<(usize, usize, char)> },
+    Jump {
+        typed: String,
+        labels: Vec<(usize, usize, char)>,
+    },
     /// Line-jump: every visible line gets a gutter label immediately.
     /// `labels` = (line_idx, label_char), sorted by distance from cursor.
-    LineJump { labels: Vec<(usize, char)> },
+    LineJump {
+        labels: Vec<(usize, char)>,
+    },
     /// Waiting for `y`/Enter/Esc before inserting multi-line text.
-    Confirm { text: String },
+    Confirm {
+        text: String,
+    },
     /// Incremental search. Only active outside selection mode.
     /// `matches` = (line, col) of each match start, sorted.
     /// `current` = index of the highlighted / cursor-targeted match.
     /// `navigating` = false while typing the query, true after Enter confirms it.
-    Search { query: String, matches: Vec<(usize, usize)>, current: usize, navigating: bool },
+    Search {
+        query: String,
+        matches: Vec<(usize, usize)>,
+        current: usize,
+        navigating: bool,
+    },
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -234,25 +250,27 @@ impl ZellijPlugin for State {
         macro_rules! apply_color {
             ($key:expr, $field:expr) => {
                 if let Some(v) = configuration.get($key) {
-                    if let Some(c) = parse_hex_color(v) { $field = c; }
+                    if let Some(c) = parse_hex_color(v) {
+                        $field = c;
+                    }
                 }
             };
         }
-        apply_color!("color_sel_bg",            self.theme.sel_bg);
-        apply_color!("color_sel_fg",            self.theme.sel_fg);
-        apply_color!("color_cursor_bg",         self.theme.cursor_bg);
-        apply_color!("color_cursor_fg",         self.theme.cursor_fg);
-        apply_color!("color_gutter_mark",       self.theme.gutter_cursor);
-        apply_color!("color_gutter_dim",        self.theme.gutter_dim);
-        apply_color!("color_sel_label",         self.theme.sel_indicator);
-        apply_color!("color_footer_dim",        self.theme.footer_dim);
-        apply_color!("color_footer_key",        self.theme.footer_key);
-        apply_color!("color_jump_label_bg",     self.theme.jump_label_bg);
-        apply_color!("color_jump_label_fg",     self.theme.jump_label_fg);
-        apply_color!("color_jump_match_fg",     self.theme.jump_match_fg);
-        apply_color!("color_search_match_bg",   self.theme.search_match_bg);
+        apply_color!("color_sel_bg", self.theme.sel_bg);
+        apply_color!("color_sel_fg", self.theme.sel_fg);
+        apply_color!("color_cursor_bg", self.theme.cursor_bg);
+        apply_color!("color_cursor_fg", self.theme.cursor_fg);
+        apply_color!("color_gutter_mark", self.theme.gutter_cursor);
+        apply_color!("color_gutter_dim", self.theme.gutter_dim);
+        apply_color!("color_sel_label", self.theme.sel_indicator);
+        apply_color!("color_footer_dim", self.theme.footer_dim);
+        apply_color!("color_footer_key", self.theme.footer_key);
+        apply_color!("color_jump_label_bg", self.theme.jump_label_bg);
+        apply_color!("color_jump_label_fg", self.theme.jump_label_fg);
+        apply_color!("color_jump_match_fg", self.theme.jump_match_fg);
+        apply_color!("color_search_match_bg", self.theme.search_match_bg);
         apply_color!("color_search_current_bg", self.theme.search_current_bg);
-        apply_color!("color_search_fg",         self.theme.search_fg);
+        apply_color!("color_search_fg", self.theme.search_fg);
     }
 
     fn update(&mut self, event: Event) -> bool {
@@ -270,14 +288,14 @@ impl ZellijPlugin for State {
                 false
             }
             Event::PaneUpdate(manifest) => {
-                let active_panes: Box<dyn Iterator<Item = &PaneInfo>> =
-                    match self.active_tab_index {
-                        Some(idx) => match manifest.panes.get(&idx) {
-                            Some(panes) => Box::new(panes.iter()),
-                            None => Box::new(manifest.panes.values().flatten()),
-                        },
+                let active_panes: Box<dyn Iterator<Item = &PaneInfo>> = match self.active_tab_index
+                {
+                    Some(idx) => match manifest.panes.get(&idx) {
+                        Some(panes) => Box::new(panes.iter()),
                         None => Box::new(manifest.panes.values().flatten()),
-                    };
+                    },
+                    None => Box::new(manifest.panes.values().flatten()),
+                };
                 for pane in active_panes {
                     if !pane.is_plugin && pane.is_focused {
                         self.last_focused_non_plugin = Some(pane.id);
@@ -333,24 +351,20 @@ impl State {
     // ── Config ────────────────────────────────────────────────────────────────
 
     fn apply_size(&self) {
-        let Some(ref size_str) = self.pending_size else { return };
+        let Some(ref size_str) = self.pending_size else {
+            return;
+        };
         let parts: Vec<&str> = size_str.splitn(2, 'x').collect();
-        if parts.len() != 2 { return; }
+        if parts.len() != 2 {
+            return;
+        }
         let width = parts[0].trim().to_string();
         let height = parts[1].trim().to_string();
         let x = center_x_for_width(&width);
-        if let Some(coords) = FloatingPaneCoordinates::new(
-            x,
-            None,
-            Some(width),
-            Some(height),
-            None,
-            None,
-        ) {
-            change_floating_panes_coordinates(vec![(
-                PaneId::Plugin(self.own_plugin_id),
-                coords,
-            )]);
+        if let Some(coords) =
+            FloatingPaneCoordinates::new(x, None, Some(width), Some(height), None, None)
+        {
+            change_floating_panes_coordinates(vec![(PaneId::Plugin(self.own_plugin_id), coords)]);
         }
     }
 
@@ -364,7 +378,10 @@ impl State {
             return;
         };
 
-        let profile = self.profiles.get(self.current_profile).copied()
+        let profile = self
+            .profiles
+            .get(self.current_profile)
+            .copied()
             .unwrap_or(Profile::Lines(200));
 
         let want_full = matches!(profile, Profile::Lines(_));
@@ -402,14 +419,18 @@ impl State {
     }
 
     fn move_up(&mut self) {
-        if self.cursor.0 == 0 { return; }
+        if self.cursor.0 == 0 {
+            return;
+        }
         self.cursor.0 -= 1;
         self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
         self.scroll_cursor_into_view();
     }
 
     fn move_down(&mut self) {
-        if self.cursor.0 + 1 >= self.lines.len() { return; }
+        if self.cursor.0 + 1 >= self.lines.len() {
+            return;
+        }
         self.cursor.0 += 1;
         self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
         self.scroll_cursor_into_view();
@@ -470,7 +491,9 @@ impl State {
     /// Adjust scroll_x so the cursor column is visible.
     fn scroll_x_into_view(&mut self) {
         let avail = self.avail_w();
-        if avail == 0 { return; }
+        if avail == 0 {
+            return;
+        }
         if self.cursor.1 < self.scroll_x {
             self.scroll_x = self.cursor.1;
         } else if self.cursor.1 + 1 >= self.scroll_x + avail {
@@ -494,7 +517,9 @@ impl State {
     // ── Profile cycling ───────────────────────────────────────────────────────
 
     fn cycle_profile(&mut self) {
-        if self.profiles.len() <= 1 { return; }
+        if self.profiles.len() <= 1 {
+            return;
+        }
         self.current_profile = (self.current_profile + 1) % self.profiles.len();
         self.anchor = None;
         self.scroll_x = 0;
@@ -508,8 +533,7 @@ impl State {
         // Any keypress clears the transient message.
         self.message = None;
 
-        let only_shift = key.has_modifiers(&[KeyModifier::Shift])
-            && key.key_modifiers.len() == 1;
+        let only_shift = key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1;
 
         // Jump mode: typing narrows matches; label key jumps cursor.
         if let Mode::Jump { typed, labels } = self.mode.clone() {
@@ -517,7 +541,13 @@ impl State {
         }
 
         // Search mode.
-        if let Mode::Search { query, matches, current, navigating } = self.mode.clone() {
+        if let Mode::Search {
+            query,
+            matches,
+            current,
+            navigating,
+        } = self.mode.clone()
+        {
             return self.handle_key_search(key, query, matches, current, navigating);
         }
 
@@ -556,13 +586,34 @@ impl State {
                     false
                 }
             }
-            BareKey::Up        => { self.move_up();    true }
-            BareKey::Down      => { self.move_down();  true }
-            BareKey::Left      => { self.move_left();  true }
-            BareKey::Right     => { self.move_right(); true }
-            BareKey::PageUp    => { self.page_up();    true }
-            BareKey::PageDown  => { self.page_down();  true }
-            BareKey::Char('g') if key.has_no_modifiers() => { self.cycle_profile(); true }
+            BareKey::Up => {
+                self.move_up();
+                true
+            }
+            BareKey::Down => {
+                self.move_down();
+                true
+            }
+            BareKey::Left => {
+                self.move_left();
+                true
+            }
+            BareKey::Right => {
+                self.move_right();
+                true
+            }
+            BareKey::PageUp => {
+                self.page_up();
+                true
+            }
+            BareKey::PageDown => {
+                self.page_down();
+                true
+            }
+            BareKey::Char('g') if key.has_no_modifiers() => {
+                self.cycle_profile();
+                true
+            }
             BareKey::Char(' ') if key.has_no_modifiers() => {
                 if self.anchor.is_some() {
                     self.anchor = None;
@@ -572,7 +623,10 @@ impl State {
                 true
             }
             BareKey::Char('s') if key.has_no_modifiers() => {
-                self.mode = Mode::Jump { typed: String::new(), labels: Vec::new() };
+                self.mode = Mode::Jump {
+                    typed: String::new(),
+                    labels: Vec::new(),
+                };
                 true
             }
             BareKey::Char('l') if key.has_no_modifiers() => {
@@ -581,14 +635,38 @@ impl State {
                 true
             }
             // ── Word motions (work in and out of selection) ───────────────────
-            BareKey::Char('w') if key.has_no_modifiers() => { self.motion_w(false); true }
-            BareKey::Char('W') if key.has_no_modifiers() || only_shift => { self.motion_w(true); true }
-            BareKey::Char('b') if key.has_no_modifiers() => { self.motion_b(false); true }
-            BareKey::Char('B') if key.has_no_modifiers() || only_shift => { self.motion_b(true); true }
-            BareKey::Char('e') if key.has_no_modifiers() => { self.motion_e(false); true }
-            BareKey::Char('E') if key.has_no_modifiers() || only_shift => { self.motion_e(true); true }
-            BareKey::Char('0') if key.has_no_modifiers() => { self.motion_line_start(); true }
-            BareKey::Char('$') if key.has_no_modifiers() => { self.motion_line_end();   true }
+            BareKey::Char('w') if key.has_no_modifiers() => {
+                self.motion_w(false);
+                true
+            }
+            BareKey::Char('W') if key.has_no_modifiers() || only_shift => {
+                self.motion_w(true);
+                true
+            }
+            BareKey::Char('b') if key.has_no_modifiers() => {
+                self.motion_b(false);
+                true
+            }
+            BareKey::Char('B') if key.has_no_modifiers() || only_shift => {
+                self.motion_b(true);
+                true
+            }
+            BareKey::Char('e') if key.has_no_modifiers() => {
+                self.motion_e(false);
+                true
+            }
+            BareKey::Char('E') if key.has_no_modifiers() || only_shift => {
+                self.motion_e(true);
+                true
+            }
+            BareKey::Char('0') if key.has_no_modifiers() => {
+                self.motion_line_start();
+                true
+            }
+            BareKey::Char('$') if key.has_no_modifiers() => {
+                self.motion_line_end();
+                true
+            }
             // `/` search — only outside selection mode.
             BareKey::Char('/') if key.has_no_modifiers() && self.anchor.is_none() => {
                 self.mode = Mode::Search {
@@ -632,9 +710,7 @@ impl State {
         };
         if text.contains('\n') {
             let line_count = text.lines().count();
-            self.mode = Mode::Confirm {
-                text: text.clone(),
-            };
+            self.mode = Mode::Confirm { text: text.clone() };
             self.message = Some(format!(
                 "Insert {} lines into pane?  y/Enter:confirm  Esc:cancel",
                 line_count
@@ -682,8 +758,10 @@ impl State {
                     }
                 }
                 // Otherwise append to search string and recompute.
-                if !c.is_control() && (key.has_no_modifiers()
-                    || (key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1))
+                if !c.is_control()
+                    && (key.has_no_modifiers()
+                        || (key.has_modifiers(&[KeyModifier::Shift])
+                            && key.key_modifiers.len() == 1))
                 {
                     typed.push(c);
                     let labels = self.compute_jump_labels(&typed);
@@ -710,12 +788,11 @@ impl State {
 
         let mut matches: Vec<(usize, usize)> = Vec::new();
         for line_idx in vis_start..vis_end {
-            let chars_lower: Vec<char> = self.lines[line_idx]
-                .to_lowercase()
-                .chars()
-                .collect();
+            let chars_lower: Vec<char> = self.lines[line_idx].to_lowercase().chars().collect();
             let n = chars_lower.len();
-            if tlen > n { continue; }
+            if tlen > n {
+                continue;
+            }
             for col in 0..=(n - tlen) {
                 if chars_lower[col..col + tlen] == typed_lower[..] {
                     matches.push((line_idx, col));
@@ -805,13 +882,19 @@ impl State {
         let start = self.cclass(line, col, wide);
         // Skip current class run.
         loop {
-            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            let Some((nl, nc)) = self.next_pos(line, col) else {
+                break;
+            };
             (line, col) = (nl, nc);
-            if self.cclass(line, col, wide) != start { break; }
+            if self.cclass(line, col, wide) != start {
+                break;
+            }
         }
         // Skip spaces.
         while self.cclass(line, col, wide) == 0 {
-            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            let Some((nl, nc)) = self.next_pos(line, col) else {
+                break;
+            };
             (line, col) = (nl, nc);
         }
         self.cursor = (line, col);
@@ -822,17 +905,23 @@ impl State {
     fn motion_b(&mut self, wide: bool) {
         let (mut line, mut col) = self.cursor;
         // Retreat one step first.
-        let Some((nl, nc)) = self.prev_pos(line, col) else { return };
+        let Some((nl, nc)) = self.prev_pos(line, col) else {
+            return;
+        };
         (line, col) = (nl, nc);
         // Skip spaces backward.
         while self.cclass(line, col, wide) == 0 {
-            let Some((nl, nc)) = self.prev_pos(line, col) else { break };
+            let Some((nl, nc)) = self.prev_pos(line, col) else {
+                break;
+            };
             (line, col) = (nl, nc);
         }
         // Skip same-class run backward to find its start.
         let target = self.cclass(line, col, wide);
         loop {
-            let Some((nl, nc)) = self.prev_pos(line, col) else { break };
+            let Some((nl, nc)) = self.prev_pos(line, col) else {
+                break;
+            };
             if self.cclass(nl, nc, wide) == target {
                 (line, col) = (nl, nc);
             } else {
@@ -847,17 +936,23 @@ impl State {
     fn motion_e(&mut self, wide: bool) {
         let (mut line, mut col) = self.cursor;
         // Advance one step first.
-        let Some((nl, nc)) = self.next_pos(line, col) else { return };
+        let Some((nl, nc)) = self.next_pos(line, col) else {
+            return;
+        };
         (line, col) = (nl, nc);
         // Skip spaces.
         while self.cclass(line, col, wide) == 0 {
-            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            let Some((nl, nc)) = self.next_pos(line, col) else {
+                break;
+            };
             (line, col) = (nl, nc);
         }
         // Advance through current class run until class changes.
         let target = self.cclass(line, col, wide);
         loop {
-            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            let Some((nl, nc)) = self.next_pos(line, col) else {
+                break;
+            };
             if self.cclass(nl, nc, wide) == target {
                 (line, col) = (nl, nc);
             } else {
@@ -884,13 +979,17 @@ impl State {
     // ── Search mode ───────────────────────────────────────────────────────────
 
     fn compute_search_matches(&self, query: &str) -> Vec<(usize, usize)> {
-        if query.is_empty() { return Vec::new(); }
+        if query.is_empty() {
+            return Vec::new();
+        }
         let q: Vec<char> = query.to_lowercase().chars().collect();
         let qlen = q.len();
         let mut out = Vec::new();
         for (li, line) in self.lines.iter().enumerate() {
             let lc: Vec<char> = line.to_lowercase().chars().collect();
-            if lc.len() < qlen { continue; }
+            if lc.len() < qlen {
+                continue;
+            }
             for col in 0..=(lc.len() - qlen) {
                 if lc[col..col + qlen] == q[..] {
                     out.push((li, col));
@@ -903,7 +1002,9 @@ impl State {
     /// Index of first match at or after cursor, wrapping to 0.
     fn search_current_from_cursor(&self, matches: &[(usize, usize)]) -> usize {
         let (cl, cc) = self.cursor;
-        matches.iter().position(|&(ml, mc)| ml > cl || (ml == cl && mc >= cc))
+        matches
+            .iter()
+            .position(|&(ml, mc)| ml > cl || (ml == cl && mc >= cc))
             .unwrap_or(0)
     }
 
@@ -935,7 +1036,12 @@ impl State {
                         current = (current + 1) % matches.len();
                         self.jump_search_cursor(&matches, current);
                     }
-                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    self.mode = Mode::Search {
+                        query,
+                        matches,
+                        current,
+                        navigating: true,
+                    };
                     true
                 }
                 BareKey::Char('N') if key.has_no_modifiers() || only_shift => {
@@ -943,7 +1049,12 @@ impl State {
                         current = (current + matches.len() - 1) % matches.len();
                         self.jump_search_cursor(&matches, current);
                     }
-                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    self.mode = Mode::Search {
+                        query,
+                        matches,
+                        current,
+                        navigating: true,
+                    };
                     true
                 }
                 _ => {
@@ -963,7 +1074,12 @@ impl State {
                     // Commit query — switch to navigation phase.
                     current = self.search_current_from_cursor(&matches);
                     self.jump_search_cursor(&matches, current);
-                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    self.mode = Mode::Search {
+                        query,
+                        matches,
+                        current,
+                        navigating: true,
+                    };
                     true
                 }
                 BareKey::Backspace => {
@@ -971,17 +1087,25 @@ impl State {
                     matches = self.compute_search_matches(&query);
                     current = self.search_current_from_cursor(&matches);
                     self.jump_search_cursor(&matches, current);
-                    self.mode = Mode::Search { query, matches, current, navigating: false };
+                    self.mode = Mode::Search {
+                        query,
+                        matches,
+                        current,
+                        navigating: false,
+                    };
                     true
                 }
-                BareKey::Char(c) if !c.is_control()
-                    && (key.has_no_modifiers() || only_shift) =>
-                {
+                BareKey::Char(c) if !c.is_control() && (key.has_no_modifiers() || only_shift) => {
                     query.push(c);
                     matches = self.compute_search_matches(&query);
                     current = self.search_current_from_cursor(&matches);
                     self.jump_search_cursor(&matches, current);
-                    self.mode = Mode::Search { query, matches, current, navigating: false };
+                    self.mode = Mode::Search {
+                        query,
+                        matches,
+                        current,
+                        navigating: false,
+                    };
                     true
                 }
                 _ => true,
@@ -1093,23 +1217,39 @@ impl State {
         let sel = self.selection_range();
 
         // Collect jump labels for this frame (empty when not in Jump mode).
-        let jump_labels: &[(usize, usize, char)] =
-            if let Mode::Jump { ref labels, .. } = self.mode { labels } else { &[] };
+        let jump_labels: &[(usize, usize, char)] = if let Mode::Jump { ref labels, .. } = self.mode
+        {
+            labels
+        } else {
+            &[]
+        };
 
         // Line-jump labels: (line_idx, label_char) for gutter replacement.
-        let line_jump_labels: &[(usize, char)] =
-            if let Mode::LineJump { ref labels } = self.mode { labels } else { &[] };
+        let line_jump_labels: &[(usize, char)] = if let Mode::LineJump { ref labels } = self.mode {
+            labels
+        } else {
+            &[]
+        };
 
         // Search highlights: collect (line, col, is_current) from Search mode.
-        let (search_all, search_current_idx, search_qlen) =
-            if let Mode::Search { ref matches, current, ref query, .. } = self.mode {
-                (matches.as_slice(), current, query.chars().count())
-            } else {
-                (&[][..], 0, 0)
-            };
+        let (search_all, search_current_idx, search_qlen) = if let Mode::Search {
+            ref matches,
+            current,
+            ref query,
+            ..
+        } = self.mode
+        {
+            (matches.as_slice(), current, query.chars().count())
+        } else {
+            (&[][..], 0, 0)
+        };
 
-        let gutter_dim = Style::default().fg(self.theme.gutter_dim).add_modifier(Modifier::DIM);
-        let gutter_cursor_style = Style::default().fg(self.theme.gutter_cursor).add_modifier(Modifier::BOLD);
+        let gutter_dim = Style::default()
+            .fg(self.theme.gutter_dim)
+            .add_modifier(Modifier::DIM);
+        let gutter_cursor_style = Style::default()
+            .fg(self.theme.gutter_cursor)
+            .add_modifier(Modifier::BOLD);
 
         let content_lines: Vec<Line<'static>> = visible
             .iter()
@@ -1137,7 +1277,11 @@ impl State {
                                 if is_cursor_line { "► " } else { "  " },
                                 w = num_w
                             ),
-                            if is_cursor_line { gutter_cursor_style } else { gutter_dim },
+                            if is_cursor_line {
+                                gutter_cursor_style
+                            } else {
+                                gutter_dim
+                            },
                         )
                     };
                 let gutter = Span::styled(gutter_str, gutter_style);
@@ -1149,29 +1293,39 @@ impl State {
 
                 // Slice the line to the visible horizontal window.
                 // Reserve 1 char on the right for `…` when content overflows.
-                let visible_w = if has_right_overflow { avail_w.saturating_sub(1) } else { avail_w };
+                let visible_w = if has_right_overflow {
+                    avail_w.saturating_sub(1)
+                } else {
+                    avail_w
+                };
                 let chars: Vec<char> = text.chars().skip(scroll_x).take(visible_w).collect();
 
                 // Convert logical selection/cursor coords → display coords (relative to scroll_x).
                 let raw_sel = sel.and_then(|(s, e)| sel_range_for_line(s, e, abs, logical_len));
-                let sel_range = raw_sel.map(|(s, e)| (
-                    s.saturating_sub(scroll_x),
-                    e.saturating_sub(scroll_x),
-                ));
+                let sel_range =
+                    raw_sel.map(|(s, e)| (s.saturating_sub(scroll_x), e.saturating_sub(scroll_x)));
                 let cur_col = if is_cursor_line {
                     Some(cursor_col.saturating_sub(scroll_x))
-                } else { None };
+                } else {
+                    None
+                };
 
                 let typed_len = if let Mode::Jump { ref typed, .. } = self.mode {
                     typed.chars().count()
-                } else { 0 };
+                } else {
+                    0
+                };
                 // Label sits on the LAST char of the matched prefix (display coords).
                 let line_labels: Vec<(usize, char)> = jump_labels
                     .iter()
                     .filter(|&&(l, _, _)| l == abs)
                     .filter_map(|&(_, col, lc)| {
                         let disp = (col + typed_len.saturating_sub(1)).saturating_sub(scroll_x);
-                        if disp < visible_w { Some((disp, lc)) } else { None }
+                        if disp < visible_w {
+                            Some((disp, lc))
+                        } else {
+                            None
+                        }
                     })
                     .collect();
 
@@ -1182,20 +1336,36 @@ impl State {
                     .filter(|(_, &(ml, _))| ml == abs)
                     .filter_map(|(i, &(_, mc))| {
                         let dc = mc.saturating_sub(scroll_x);
-                        if dc < visible_w { Some((dc, i == search_current_idx)) } else { None }
+                        if dc < visible_w {
+                            Some((dc, i == search_current_idx))
+                        } else {
+                            None
+                        }
                     })
                     .collect();
 
                 let mut spans = vec![gutter];
                 if has_left_overflow {
-                    spans.push(Span::styled("…", Style::default().fg(self.theme.footer_dim)));
+                    spans.push(Span::styled(
+                        "…",
+                        Style::default().fg(self.theme.footer_dim),
+                    ));
                 }
                 spans.extend(build_line_spans(
-                    &chars, sel_range, cur_col, &line_labels, typed_len,
-                    &line_search, search_qlen, &self.theme,
+                    &chars,
+                    sel_range,
+                    cur_col,
+                    &line_labels,
+                    typed_len,
+                    &line_search,
+                    search_qlen,
+                    &self.theme,
                 ));
                 if has_right_overflow {
-                    spans.push(Span::styled("…", Style::default().fg(self.theme.footer_dim)));
+                    spans.push(Span::styled(
+                        "…",
+                        Style::default().fg(self.theme.footer_dim),
+                    ));
                 }
                 Line::from(spans)
             })
@@ -1205,11 +1375,16 @@ impl State {
     }
 
     fn render_footer(&self, area: Rect, buf: &mut Buffer) {
-        let bold = Style::default().fg(self.theme.footer_key).add_modifier(Modifier::BOLD);
+        let bold = Style::default()
+            .fg(self.theme.footer_key)
+            .add_modifier(Modifier::BOLD);
         let dim = Style::default().fg(self.theme.footer_dim);
-        let sel_style = Style::default().fg(self.theme.sel_indicator).add_modifier(Modifier::BOLD);
+        let sel_style = Style::default()
+            .fg(self.theme.sel_indicator)
+            .add_modifier(Modifier::BOLD);
 
-        let profile_label = self.profiles
+        let profile_label = self
+            .profiles
             .get(self.current_profile)
             .map(|p| p.label())
             .unwrap_or_else(|| "?".to_string());
@@ -1239,7 +1414,13 @@ impl State {
         }
         let line1 = Line::from(line1_spans);
 
-        let line2 = if let Mode::Search { query, matches, current, navigating } = &self.mode {
+        let line2 = if let Mode::Search {
+            query,
+            matches,
+            current,
+            navigating,
+        } = &self.mode
+        {
             let count_str = if matches.is_empty() && !query.is_empty() {
                 "  (no matches)".to_string()
             } else if !matches.is_empty() {
@@ -1252,24 +1433,34 @@ impl State {
                     Span::raw(" "),
                     Span::styled(
                         format!("/{query}{count_str}"),
-                        Style::default().fg(self.theme.search_current_bg).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(self.theme.search_current_bg)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
-                    Span::styled("n", bold), Span::raw(":next  "),
-                    Span::styled("N", bold), Span::raw(":prev  "),
-                    Span::styled("Space", bold), Span::raw(":select  "),
-                    Span::styled("Esc", bold), Span::raw(":done"),
+                    Span::styled("n", bold),
+                    Span::raw(":next  "),
+                    Span::styled("N", bold),
+                    Span::raw(":prev  "),
+                    Span::styled("Space", bold),
+                    Span::raw(":select  "),
+                    Span::styled("Esc", bold),
+                    Span::raw(":done"),
                 ])
             } else {
                 Line::from(vec![
                     Span::raw(" "),
                     Span::styled(
                         format!("/{query}█{count_str}"),
-                        Style::default().fg(self.theme.search_current_bg).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(self.theme.search_current_bg)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
-                    Span::styled("Enter", bold), Span::raw(":confirm  "),
-                    Span::styled("Esc", bold), Span::raw(":cancel"),
+                    Span::styled("Enter", bold),
+                    Span::raw(":confirm  "),
+                    Span::styled("Esc", bold),
+                    Span::raw(":cancel"),
                 ])
             }
         } else if let Mode::LineJump { labels } = &self.mode {
@@ -1277,7 +1468,9 @@ impl State {
                 Span::raw(" "),
                 Span::styled(
                     format!("line jump — {} lines labeled", labels.len()),
-                    Style::default().fg(self.theme.jump_label_bg).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(self.theme.jump_label_bg)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::styled("Esc", bold),
@@ -1293,7 +1486,12 @@ impl State {
             };
             Line::from(vec![
                 Span::raw(" "),
-                Span::styled(hint, Style::default().fg(self.theme.jump_label_bg).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    hint,
+                    Style::default()
+                        .fg(self.theme.jump_label_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  "),
                 Span::styled("Esc", bold),
                 Span::raw(":cancel"),
@@ -1303,7 +1501,9 @@ impl State {
                 Span::raw(" "),
                 Span::styled(
                     self.message.clone().unwrap_or_default(),
-                    Style::default().fg(self.theme.sel_indicator).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(self.theme.sel_indicator)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ])
         } else if self.anchor.is_some() {
@@ -1429,7 +1629,9 @@ impl State {
 /// Returns None for non-percentage or unusual values.
 fn center_x_for_width(width: &str) -> Option<String> {
     let pct: u32 = width.strip_suffix('%')?.parse().ok()?;
-    if pct >= 100 { return Some("0%".to_string()); }
+    if pct >= 100 {
+        return Some("0%".to_string());
+    }
     Some(format!("{}%", (100 - pct) / 2))
 }
 
@@ -1444,9 +1646,15 @@ fn sel_range_for_line(
 ) -> Option<(usize, usize)> {
     let (sl, sc) = start;
     let (el, ec) = end;
-    if line < sl || line > el { return None; }
+    if line < sl || line > el {
+        return None;
+    }
     let col_start = if line == sl { sc } else { 0 };
-    let col_end   = if line == el { ec } else { line_len.saturating_sub(1) };
+    let col_end = if line == el {
+        ec
+    } else {
+        line_len.saturating_sub(1)
+    };
     Some((col_start, col_end))
 }
 
@@ -1462,6 +1670,7 @@ fn sel_range_for_line(
 /// `line_labels`: (col, label_char) pairs for labels on this line.
 /// `typed_len`: length of the current jump search string (chars after the
 ///   label are the matched prefix and get a dim highlight).
+#[allow(clippy::too_many_arguments)]
 fn build_line_spans(
     chars: &[char],
     sel: Option<(usize, usize)>,
@@ -1472,14 +1681,22 @@ fn build_line_spans(
     search_len: usize,
     theme: &Theme,
 ) -> Vec<Span<'static>> {
-    let sel_style           = Style::default().bg(theme.sel_bg).fg(theme.sel_fg);
-    let cursor_style        = Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg);
-    let label_style         = Style::default().bg(theme.jump_label_bg).fg(theme.jump_label_fg)
-                                  .add_modifier(Modifier::BOLD);
-    let match_style         = Style::default().fg(theme.jump_match_fg).add_modifier(Modifier::BOLD);
-    let search_style        = Style::default().bg(theme.search_match_bg).fg(theme.search_fg);
-    let search_cur_style    = Style::default().bg(theme.search_current_bg).fg(theme.search_fg)
-                                  .add_modifier(Modifier::BOLD);
+    let sel_style = Style::default().bg(theme.sel_bg).fg(theme.sel_fg);
+    let cursor_style = Style::default().bg(theme.cursor_bg).fg(theme.cursor_fg);
+    let label_style = Style::default()
+        .bg(theme.jump_label_bg)
+        .fg(theme.jump_label_fg)
+        .add_modifier(Modifier::BOLD);
+    let match_style = Style::default()
+        .fg(theme.jump_match_fg)
+        .add_modifier(Modifier::BOLD);
+    let search_style = Style::default()
+        .bg(theme.search_match_bg)
+        .fg(theme.search_fg);
+    let search_cur_style = Style::default()
+        .bg(theme.search_current_bg)
+        .fg(theme.search_fg)
+        .add_modifier(Modifier::BOLD);
 
     let mut cells: Vec<(char, Style)> = chars
         .iter()
@@ -1490,24 +1707,38 @@ fn build_line_spans(
                 return (lc, label_style);
             }
             // 2. Jump prefix match chars.
-            let in_jump_match = typed_len > 1 && line_labels.iter().any(|&(label_col, _)| {
-                let start = label_col.saturating_sub(typed_len - 1);
-                i >= start && i < label_col
-            });
-            if in_jump_match { return (ch, match_style); }
+            let in_jump_match = typed_len > 1
+                && line_labels.iter().any(|&(label_col, _)| {
+                    let start = label_col.saturating_sub(typed_len - 1);
+                    i >= start && i < label_col
+                });
+            if in_jump_match {
+                return (ch, match_style);
+            }
             // 3. Cursor.
-            if cursor_col == Some(i) { return (ch, cursor_style); }
+            if cursor_col == Some(i) {
+                return (ch, cursor_style);
+            }
             // 4. Current search match.
             if search_len > 0 {
                 for &(mc, is_cur) in search_matches {
                     if i >= mc && i < mc + search_len {
-                        return (ch, if is_cur { search_cur_style } else { search_style });
+                        return (
+                            ch,
+                            if is_cur {
+                                search_cur_style
+                            } else {
+                                search_style
+                            },
+                        );
                     }
                 }
             }
             // 5. Selection.
             if let Some((s, e)) = sel {
-                if i >= s && i <= e { return (ch, sel_style); }
+                if i >= s && i <= e {
+                    return (ch, sel_style);
+                }
             }
             (ch, Style::default())
         })
@@ -1517,7 +1748,11 @@ fn build_line_spans(
     let past_end = cursor_col.map(|c| c >= chars.len()).unwrap_or(false);
     if past_end {
         let style = if let Some((s, e)) = sel {
-            if chars.len() >= s && chars.len() <= e { sel_style } else { cursor_style }
+            if chars.len() >= s && chars.len() <= e {
+                sel_style
+            } else {
+                cursor_style
+            }
         } else {
             cursor_style
         };

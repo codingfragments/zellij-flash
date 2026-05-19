@@ -865,6 +865,12 @@ impl State {
                     self.mode = Mode::Normal;
                     true
                 }
+                BareKey::Char(' ') if key.has_no_modifiers() => {
+                    // Exit search and anchor selection at current match start.
+                    self.anchor = Some(self.cursor);
+                    self.mode = Mode::Normal;
+                    true
+                }
                 BareKey::Char('n') if key.has_no_modifiers() => {
                     if !matches.is_empty() {
                         current = (current + 1) % matches.len();
@@ -1192,6 +1198,7 @@ impl State {
                     Span::raw("  "),
                     Span::styled("n", bold), Span::raw(":next  "),
                     Span::styled("N", bold), Span::raw(":prev  "),
+                    Span::styled("Space", bold), Span::raw(":select  "),
                     Span::styled("Esc", bold), Span::raw(":done"),
                 ])
             } else {

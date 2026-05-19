@@ -21,6 +21,8 @@ const C_YELLOW:   Color = Color::Rgb(238, 212, 159); // #eed49f — gutter curso
 const C_BLUE:     Color = Color::Rgb(138, 173, 244); // #8aadf4 — selection bg
 const C_TEAL:     Color = Color::Rgb(139, 213, 202); // #8bd5ca — SEL indicator
 const C_SUBTEXT1: Color = Color::Rgb(184, 192, 224); // #b8c0e0 — footer hints / bold keys
+const C_PEACH:    Color = Color::Rgb(245, 169, 127); // #f5a97f — jump label bg
+const C_RED:      Color = Color::Rgb(237, 135, 150); // #ed8796 — jump match highlight
 
 // Semantic roles → palette entries (single place to remap when config lands).
 const THEME_SEL_BG:          Color = C_BLUE;
@@ -32,6 +34,9 @@ const THEME_GUTTER_DIM:      Color = C_OVERLAY0;
 const THEME_SEL_INDICATOR:   Color = C_TEAL;
 const THEME_FOOTER_DIM:      Color = C_OVERLAY0;
 const THEME_FOOTER_KEY:      Color = C_SUBTEXT1;
+const THEME_JUMP_LABEL_BG:   Color = C_PEACH;
+const THEME_JUMP_LABEL_FG:   Color = C_BASE;
+const THEME_JUMP_MATCH_FG:   Color = C_RED;
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 
@@ -74,10 +79,22 @@ fn default_profiles() -> Vec<Profile> {
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
+/// Label pool: a-z then A-Z. 52 entries; indices used to assign labels by
+/// sorted distance from cursor.
+const LABEL_CHARS: &[char] = &[
+    'a','b','c','d','e','f','g','h','i','j','k','l','m',
+    'n','o','p','q','r','s','t','u','v','w','x','y','z',
+    'A','B','C','D','E','F','G','H','I','J','K','L','M',
+    'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
+];
+
 #[derive(Debug, Clone)]
 enum Mode {
     Normal,
-    /// Waiting for `y` / Esc before inserting multi-line text into source pane.
+    /// Word-jump: user types a prefix, labels appear on visible matches.
+    /// `labels` = (line, col, label_char), sorted by distance from cursor.
+    Jump { typed: String, labels: Vec<(usize, usize, char)> },
+    /// Waiting for `y`/Enter/Esc before inserting multi-line text.
     Confirm { text: String },
 }
 
@@ -387,6 +404,11 @@ impl State {
         let only_shift = key.has_modifiers(&[KeyModifier::Shift])
             && key.key_modifiers.len() == 1;
 
+        // Jump mode: typing narrows matches; label key jumps cursor.
+        if let Mode::Jump { typed, labels } = self.mode.clone() {
+            return self.handle_key_jump(key, typed, labels);
+        }
+
         // Confirm mode: waiting for y/Esc before inserting multi-line text.
         if let Mode::Confirm { text } = self.mode.clone() {
             return match key.bare_key {
@@ -430,6 +452,10 @@ impl State {
                 } else {
                     self.anchor = Some(self.cursor);
                 }
+                true
+            }
+            BareKey::Char('s') if key.has_no_modifiers() => {
+                self.mode = Mode::Jump { typed: String::new(), labels: Vec::new() };
                 true
             }
             BareKey::Enter if only_shift => {
@@ -486,6 +512,111 @@ impl State {
         close_self();
     }
 
+    // ── Jump mode ─────────────────────────────────────────────────────────────
+
+    fn handle_key_jump(
+        &mut self,
+        key: KeyWithModifier,
+        mut typed: String,
+        labels: Vec<(usize, usize, char)>,
+    ) -> bool {
+        match key.bare_key {
+            BareKey::Esc => {
+                self.mode = Mode::Normal;
+                return true;
+            }
+            BareKey::Backspace => {
+                typed.pop();
+                let labels = self.compute_jump_labels(&typed);
+                self.mode = Mode::Jump { typed, labels };
+                return true;
+            }
+            BareKey::Char(c) => {
+                // If labels are showing and c matches a label → jump.
+                if !labels.is_empty() {
+                    if let Some(&(line, col, _)) = labels.iter().find(|&&(_, _, lc)| lc == c) {
+                        self.jump_to(line, col);
+                        self.mode = Mode::Normal;
+                        return true;
+                    }
+                }
+                // Otherwise append to search string and recompute.
+                if !c.is_control() && (key.has_no_modifiers()
+                    || (key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1))
+                {
+                    typed.push(c);
+                    let labels = self.compute_jump_labels(&typed);
+                    self.mode = Mode::Jump { typed, labels };
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn compute_jump_labels(&self, typed: &str) -> Vec<(usize, usize, char)> {
+        if typed.is_empty() {
+            return Vec::new();
+        }
+
+        let typed_lower: Vec<char> = typed.to_lowercase().chars().collect();
+        let tlen = typed_lower.len();
+
+        // Search visible lines only.
+        let vis_start = self.scroll_y;
+        let vis_end = (self.scroll_y + self.content_rows).min(self.lines.len());
+
+        let mut matches: Vec<(usize, usize)> = Vec::new();
+        for line_idx in vis_start..vis_end {
+            let chars_lower: Vec<char> = self.lines[line_idx]
+                .to_lowercase()
+                .chars()
+                .collect();
+            let n = chars_lower.len();
+            if tlen > n { continue; }
+            for col in 0..=(n - tlen) {
+                if chars_lower[col..col + tlen] == typed_lower[..] {
+                    matches.push((line_idx, col));
+                }
+            }
+        }
+
+        if matches.is_empty() || matches.len() > LABEL_CHARS.len() {
+            return Vec::new();
+        }
+
+        // Sort by distance from cursor (line distance weighted heavier).
+        let (cline, ccol) = self.cursor;
+        matches.sort_by_key(|&(line, col)| {
+            let dl = (line as isize - cline as isize).unsigned_abs();
+            let dc = (col as isize - ccol as isize).unsigned_abs();
+            dl * 10_000 + dc
+        });
+
+        // Build label pool excluding typed chars (both cases) to prevent ambiguity.
+        let exclude: std::collections::HashSet<char> = typed
+            .chars()
+            .flat_map(|c| [c.to_ascii_lowercase(), c.to_ascii_uppercase()])
+            .collect();
+        let pool: Vec<char> = LABEL_CHARS
+            .iter()
+            .filter(|&&c| !exclude.contains(&c))
+            .copied()
+            .collect();
+
+        matches
+            .into_iter()
+            .zip(pool)
+            .map(|((line, col), label)| (line, col, label))
+            .collect()
+    }
+
+    fn jump_to(&mut self, line: usize, col: usize) {
+        self.cursor = (line, col);
+        self.recenter_scroll();
+    }
+
     // ── Rendering ─────────────────────────────────────────────────────────────
 
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
@@ -535,6 +666,10 @@ impl State {
 
         let sel = self.selection_range();
 
+        // Collect jump labels for this frame (empty when not in Jump mode).
+        let jump_labels: &[(usize, usize, char)] =
+            if let Mode::Jump { ref labels, .. } = self.mode { labels } else { &[] };
+
         let gutter_dim = Style::default().fg(THEME_GUTTER_DIM).add_modifier(Modifier::DIM);
         let gutter_cursor_style = Style::default().fg(THEME_GUTTER_CURSOR).add_modifier(Modifier::BOLD);
 
@@ -561,8 +696,20 @@ impl State {
                 let sel_range = sel.and_then(|(s, e)| sel_range_for_line(s, e, abs, chars.len()));
                 let cur_col = if is_cursor_line { Some(cursor_col) } else { None };
 
+                // Labels on this line: collect (col, label_char).
+                let typed_len = if let Mode::Jump { ref typed, .. } = self.mode {
+                    typed.chars().count()
+                } else { 0 };
+                // Label sits on the LAST char of the matched prefix so the
+                // earlier chars stay visible and confirm the match.
+                let line_labels: Vec<(usize, char)> = jump_labels
+                    .iter()
+                    .filter(|&&(l, _, _)| l == abs)
+                    .map(|&(_, col, lc)| (col + typed_len.saturating_sub(1), lc))
+                    .collect();
+
                 let mut spans = vec![gutter];
-                spans.extend(build_line_spans(&chars, sel_range, cur_col));
+                spans.extend(build_line_spans(&chars, sel_range, cur_col, &line_labels, typed_len));
                 Line::from(spans)
             })
             .collect();
@@ -600,7 +747,22 @@ impl State {
         }
         let line1 = Line::from(line1_spans);
 
-        let line2 = if let Mode::Confirm { .. } = &self.mode {
+        let line2 = if let Mode::Jump { typed, labels } = &self.mode {
+            let hint = if labels.is_empty() && !typed.is_empty() {
+                format!("jump: {}  (no matches)", typed)
+            } else if labels.is_empty() {
+                "jump: type to search…".to_string()
+            } else {
+                format!("jump: {}  ({} matches)", typed, labels.len())
+            };
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(hint, Style::default().fg(THEME_JUMP_LABEL_BG).add_modifier(Modifier::BOLD)),
+                Span::raw("  "),
+                Span::styled("Esc", bold),
+                Span::raw(":cancel"),
+            ])
+        } else if let Mode::Confirm { .. } = &self.mode {
             Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
@@ -748,58 +910,92 @@ fn sel_range_for_line(
     Some((col_start, col_end))
 }
 
-/// Build ratatui spans for one line of content, applying selection highlight
-/// and cursor cell. Selection range is (start_col, end_col) inclusive in
-/// char indices. cursor_col is Some only for the cursor line.
+/// Build ratatui spans for one line of content.
+///
+/// Priority per character cell (highest wins):
+///   1. Jump label position   → label char + label style
+///   2. Cursor cell           → cursor style (inverted)
+///   3. Selection range       → selection style
+///   4. Jump match highlight  → match chars after label dimly highlighted
+///   5. Normal text
+///
+/// `line_labels`: (col, label_char) pairs for labels on this line.
+/// `typed_len`: length of the current jump search string (chars after the
+///   label are the matched prefix and get a dim highlight).
 fn build_line_spans(
     chars: &[char],
     sel: Option<(usize, usize)>,
     cursor_col: Option<usize>,
+    line_labels: &[(usize, char)],
+    typed_len: usize,
 ) -> Vec<Span<'static>> {
     let sel_style    = Style::default().bg(THEME_SEL_BG).fg(THEME_SEL_FG);
     let cursor_style = Style::default().bg(THEME_CURSOR_BG).fg(THEME_CURSOR_FG);
+    let label_style  = Style::default().bg(THEME_JUMP_LABEL_BG).fg(THEME_JUMP_LABEL_FG)
+                           .add_modifier(Modifier::BOLD);
+    let match_style  = Style::default().fg(THEME_JUMP_MATCH_FG).add_modifier(Modifier::BOLD);
 
-    let char_style = |i: usize| -> Style {
-        if cursor_col == Some(i) {
-            cursor_style
-        } else if let Some((s, e)) = sel {
-            if i >= s && i <= e { sel_style } else { Style::default() }
+    // Build a per-character decision: (display_char, style).
+    let mut cells: Vec<(char, Style)> = chars
+        .iter()
+        .enumerate()
+        .map(|(i, &ch)| {
+            // Label takes priority.
+            if let Some(&(_, lc)) = line_labels.iter().find(|&&(lc, _)| lc == i) {
+                return (lc, label_style);
+            }
+            // Chars before the label within the matched prefix get match highlight.
+            // label_col is the last char of the match; match starts at label_col - (typed_len-1).
+            let in_match = typed_len > 1 && line_labels.iter().any(|&(label_col, _)| {
+                let match_start = label_col.saturating_sub(typed_len - 1);
+                i >= match_start && i < label_col
+            });
+            if in_match {
+                return (ch, match_style);
+            }
+            // Cursor.
+            if cursor_col == Some(i) {
+                return (ch, cursor_style);
+            }
+            // Selection.
+            if let Some((s, e)) = sel {
+                if i >= s && i <= e {
+                    return (ch, sel_style);
+                }
+            }
+            (ch, Style::default())
+        })
+        .collect();
+
+    // Cursor or selection past end of line.
+    let past_end = cursor_col.map(|c| c >= chars.len()).unwrap_or(false);
+    if past_end {
+        let style = if let Some((s, e)) = sel {
+            if chars.len() >= s && chars.len() <= e { sel_style } else { cursor_style }
         } else {
-            Style::default()
-        }
-    };
+            cursor_style
+        };
+        cells.push((' ', style));
+    }
 
+    // Merge consecutive cells with the same style into spans.
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut run = String::new();
     let mut run_style = Style::default();
 
-    for (i, &ch) in chars.iter().enumerate() {
-        let s = char_style(i);
-        if s != run_style {
+    for (ch, style) in cells {
+        if style != run_style {
             if !run.is_empty() {
                 spans.push(Span::styled(run.clone(), run_style));
                 run.clear();
             }
-            run_style = s;
+            run_style = style;
         }
         run.push(ch);
     }
     if !run.is_empty() {
         spans.push(Span::styled(run, run_style));
     }
-
-    // Cursor past end of line (empty line, or cursor at line_len position).
-    let past_end = cursor_col.map(|c| c >= chars.len()).unwrap_or(false);
-    if past_end {
-        // If the past-end position is also inside the selection, show it selected.
-        let style = if let Some((s, e)) = sel {
-            if chars.len() >= s && chars.len() <= e { sel_style } else { cursor_style }
-        } else {
-            cursor_style
-        };
-        spans.push(Span::styled(" ", style));
-    }
-
     if spans.is_empty() {
         spans.push(Span::raw(""));
     }

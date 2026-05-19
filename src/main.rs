@@ -106,7 +106,8 @@ enum Mode {
     /// Incremental search. Only active outside selection mode.
     /// `matches` = (line, col) of each match start, sorted.
     /// `current` = index of the highlighted / cursor-targeted match.
-    Search { query: String, matches: Vec<(usize, usize)>, current: usize },
+    /// `navigating` = false while typing the query, true after Enter confirms it.
+    Search { query: String, matches: Vec<(usize, usize)>, current: usize, navigating: bool },
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -457,8 +458,8 @@ impl State {
         }
 
         // Search mode.
-        if let Mode::Search { query, matches, current } = self.mode.clone() {
-            return self.handle_key_search(key, query, matches, current);
+        if let Mode::Search { query, matches, current, navigating } = self.mode.clone() {
+            return self.handle_key_search(key, query, matches, current, navigating);
         }
 
         // Line-jump mode: label key jumps to that line.
@@ -531,7 +532,12 @@ impl State {
             BareKey::Char('$') if key.has_no_modifiers() => { self.motion_line_end();   true }
             // `/` search — only outside selection mode.
             BareKey::Char('/') if key.has_no_modifiers() && self.anchor.is_none() => {
-                self.mode = Mode::Search { query: String::new(), matches: Vec::new(), current: 0 };
+                self.mode = Mode::Search {
+                    query: String::new(),
+                    matches: Vec::new(),
+                    current: 0,
+                    navigating: false,
+                };
                 true
             }
             BareKey::Enter if only_shift => {
@@ -848,51 +854,73 @@ impl State {
         mut query: String,
         mut matches: Vec<(usize, usize)>,
         mut current: usize,
+        navigating: bool,
     ) -> bool {
         let only_shift = key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1;
-        match key.bare_key {
-            BareKey::Esc | BareKey::Enter => {
-                // Stay at current match position, return to Normal.
-                self.mode = Mode::Normal;
-                true
-            }
-            BareKey::Backspace => {
-                query.pop();
-                matches = self.compute_search_matches(&query);
-                current = self.search_current_from_cursor(&matches);
-                self.jump_search_cursor(&matches, current);
-                self.mode = Mode::Search { query, matches, current };
-                true
-            }
-            // n — next match.
-            BareKey::Char('n') if key.has_no_modifiers() => {
-                if !matches.is_empty() {
-                    current = (current + 1) % matches.len();
-                    self.jump_search_cursor(&matches, current);
+
+        if navigating {
+            // Navigation phase: n/N move between matches, anything else exits.
+            match key.bare_key {
+                BareKey::Esc => {
+                    self.mode = Mode::Normal;
+                    true
                 }
-                self.mode = Mode::Search { query, matches, current };
-                true
-            }
-            // N — previous match.
-            BareKey::Char('N') if key.has_no_modifiers() || only_shift => {
-                if !matches.is_empty() {
-                    current = (current + matches.len() - 1) % matches.len();
-                    self.jump_search_cursor(&matches, current);
+                BareKey::Char('n') if key.has_no_modifiers() => {
+                    if !matches.is_empty() {
+                        current = (current + 1) % matches.len();
+                        self.jump_search_cursor(&matches, current);
+                    }
+                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    true
                 }
-                self.mode = Mode::Search { query, matches, current };
-                true
+                BareKey::Char('N') if key.has_no_modifiers() || only_shift => {
+                    if !matches.is_empty() {
+                        current = (current + matches.len() - 1) % matches.len();
+                        self.jump_search_cursor(&matches, current);
+                    }
+                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    true
+                }
+                _ => {
+                    // Any other key exits search, stays at current match.
+                    self.mode = Mode::Normal;
+                    true
+                }
             }
-            BareKey::Char(c) if !c.is_control()
-                && (key.has_no_modifiers() || only_shift) =>
-            {
-                query.push(c);
-                matches = self.compute_search_matches(&query);
-                current = self.search_current_from_cursor(&matches);
-                self.jump_search_cursor(&matches, current);
-                self.mode = Mode::Search { query, matches, current };
-                true
+        } else {
+            // Input phase: type freely; Enter confirms, Esc cancels.
+            match key.bare_key {
+                BareKey::Esc => {
+                    self.mode = Mode::Normal;
+                    true
+                }
+                BareKey::Enter => {
+                    // Commit query — switch to navigation phase.
+                    current = self.search_current_from_cursor(&matches);
+                    self.jump_search_cursor(&matches, current);
+                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    true
+                }
+                BareKey::Backspace => {
+                    query.pop();
+                    matches = self.compute_search_matches(&query);
+                    current = self.search_current_from_cursor(&matches);
+                    self.jump_search_cursor(&matches, current);
+                    self.mode = Mode::Search { query, matches, current, navigating: false };
+                    true
+                }
+                BareKey::Char(c) if !c.is_control()
+                    && (key.has_no_modifiers() || only_shift) =>
+                {
+                    query.push(c);
+                    matches = self.compute_search_matches(&query);
+                    current = self.search_current_from_cursor(&matches);
+                    self.jump_search_cursor(&matches, current);
+                    self.mode = Mode::Search { query, matches, current, navigating: false };
+                    true
+                }
+                _ => true,
             }
-            _ => true,
         }
     }
 
@@ -1009,7 +1037,7 @@ impl State {
 
         // Search highlights: collect (line, col, is_current) from Search mode.
         let (search_all, search_current_idx, search_qlen) =
-            if let Mode::Search { ref matches, current, ref query } = self.mode {
+            if let Mode::Search { ref matches, current, ref query, .. } = self.mode {
                 (matches.as_slice(), current, query.chars().count())
             } else {
                 (&[][..], 0, 0)
@@ -1146,27 +1174,38 @@ impl State {
         }
         let line1 = Line::from(line1_spans);
 
-        let line2 = if let Mode::Search { query, matches, current } = &self.mode {
-            let status = if matches.is_empty() && !query.is_empty() {
-                format!("/{query}  (no matches)")
-            } else if matches.is_empty() {
-                format!("/{query}")
+        let line2 = if let Mode::Search { query, matches, current, navigating } = &self.mode {
+            let count_str = if matches.is_empty() && !query.is_empty() {
+                "  (no matches)".to_string()
+            } else if !matches.is_empty() {
+                format!("  {}/{}", current + 1, matches.len())
             } else {
-                format!("/{query}  {}/{}", current + 1, matches.len())
+                String::new()
             };
-            Line::from(vec![
-                Span::raw(" "),
-                Span::styled(status, Style::default()
-                    .fg(THEME_SEARCH_CURRENT_BG)
-                    .add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled("n", bold),
-                Span::raw(":next  "),
-                Span::styled("N", bold),
-                Span::raw(":prev  "),
-                Span::styled("Esc/Enter", bold),
-                Span::raw(":done"),
-            ])
+            if *navigating {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("/{query}{count_str}"),
+                        Style::default().fg(THEME_SEARCH_CURRENT_BG).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled("n", bold), Span::raw(":next  "),
+                    Span::styled("N", bold), Span::raw(":prev  "),
+                    Span::styled("Esc", bold), Span::raw(":done"),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("/{query}█{count_str}"),
+                        Style::default().fg(THEME_SEARCH_CURRENT_BG).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled("Enter", bold), Span::raw(":confirm  "),
+                    Span::styled("Esc", bold), Span::raw(":cancel"),
+                ])
+            }
         } else if let Mode::LineJump { labels } = &self.mode {
             Line::from(vec![
                 Span::raw(" "),

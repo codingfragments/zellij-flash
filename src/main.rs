@@ -171,6 +171,14 @@ struct State {
     extraction_done: bool,
     profiles: Vec<Profile>,
     current_profile: usize,
+    /// Label characters used for word-jump (`s`). Configured via the `labels`
+    /// keybind key. Defaults to a-z then A-Z.
+    jump_labels: Vec<char>,
+    /// When true, line-jump (`l`) uses `jump_labels` split into two halves:
+    /// first half for lines below (nearest = first), second half for lines
+    /// above (nearest = first of second half). When false (default), line-jump
+    /// uses its own directional scheme: a-z below, A-Z above.
+    line_labels_unified: bool,
     /// Logical cursor position: (line index, char col) into `lines`.
     cursor: (usize, usize),
     /// Selection anchor. When Some, the selection spans from anchor to cursor
@@ -204,6 +212,8 @@ impl Default for State {
             extraction_done: false,
             profiles: default_profiles(),
             current_profile: 0,
+            jump_labels: LABEL_CHARS.to_vec(),
+            line_labels_unified: false,
             cursor: (0, 0),
             anchor: None,
             scroll_y: 0,
@@ -243,6 +253,21 @@ impl ZellijPlugin for State {
         }
         if let Some(size) = configuration.get("size") {
             self.pending_size = Some(size.clone());
+        }
+        if let Some(lbls) = configuration.get("labels") {
+            // Keep printable non-whitespace chars, deduplicate, preserve order.
+            let mut parsed: Vec<char> = Vec::new();
+            for c in lbls.chars() {
+                if !c.is_whitespace() && !c.is_control() && !parsed.contains(&c) {
+                    parsed.push(c);
+                }
+            }
+            if !parsed.is_empty() {
+                self.jump_labels = parsed;
+            }
+        }
+        if let Some(v) = configuration.get("line_labels") {
+            self.line_labels_unified = matches!(v.trim(), "unified" | "custom" | "true" | "on");
         }
 
         // Override individual theme colors from keybind config.
@@ -594,6 +619,23 @@ impl State {
                 self.move_down();
                 true
             }
+            BareKey::Left if only_shift => {
+                // Pan viewport left 5 cols; clamps at 0.
+                self.scroll_x = self.scroll_x.saturating_sub(5);
+                true
+            }
+            BareKey::Right if only_shift => {
+                // Pan viewport right 5 cols; clamps so line start stays visible.
+                let max_x = self
+                    .lines
+                    .iter()
+                    .map(|l| l.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .saturating_sub(self.avail_w().saturating_sub(1));
+                self.scroll_x = (self.scroll_x + 5).min(max_x);
+                true
+            }
             BareKey::Left => {
                 self.move_left();
                 true
@@ -800,7 +842,7 @@ impl State {
             }
         }
 
-        if matches.is_empty() || matches.len() > LABEL_CHARS.len() {
+        if matches.is_empty() || matches.len() > self.jump_labels.len() {
             return Vec::new();
         }
 
@@ -817,7 +859,8 @@ impl State {
             .chars()
             .flat_map(|c| [c.to_ascii_lowercase(), c.to_ascii_uppercase()])
             .collect();
-        let pool: Vec<char> = LABEL_CHARS
+        let pool: Vec<char> = self
+            .jump_labels
             .iter()
             .filter(|&&c| !exclude.contains(&c))
             .copied()
@@ -1127,18 +1170,31 @@ impl State {
         let vis_end = (self.scroll_y + self.content_rows).min(self.lines.len());
         let (cline, _) = self.cursor;
 
-        // Lines below cursor: a (nearest) → z (furthest).
         let below = (vis_start..vis_end).filter(|&l| l > cline);
-        // Lines above cursor: A (nearest) → Z (furthest) — reverse order so
-        // the immediately-adjacent line gets 'A'.
         let above = (vis_start..cline.min(vis_end)).rev();
 
         let mut labels: Vec<(usize, char)> = Vec::new();
-        for (line, lc) in below.zip('a'..='z') {
-            labels.push((line, lc));
-        }
-        for (line, lc) in above.zip('A'..='Z') {
-            labels.push((line, lc));
+
+        if self.line_labels_unified {
+            // Split jump_labels in half: first half → below, second half → above.
+            let n = self.jump_labels.len();
+            let mid = n.div_ceil(2); // first half gets the extra char if odd
+            let below_pool = &self.jump_labels[..mid];
+            let above_pool = &self.jump_labels[mid..];
+            for (line, &lc) in below.zip(below_pool.iter()) {
+                labels.push((line, lc));
+            }
+            for (line, &lc) in above.zip(above_pool.iter()) {
+                labels.push((line, lc));
+            }
+        } else {
+            // Default directional scheme: a-z below (nearest = a), A-Z above (nearest = A).
+            for (line, lc) in below.zip('a'..='z') {
+                labels.push((line, lc));
+            }
+            for (line, lc) in above.zip('A'..='Z') {
+                labels.push((line, lc));
+            }
         }
         labels
     }

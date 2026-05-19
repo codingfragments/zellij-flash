@@ -350,6 +350,7 @@ impl State {
     fn move_left(&mut self) {
         if self.cursor.1 > 0 {
             self.cursor.1 -= 1;
+            self.scroll_x_into_view();
         } else if self.cursor.0 > 0 {
             self.cursor.0 -= 1;
             self.cursor.1 = self.line_len(self.cursor.0);
@@ -361,6 +362,7 @@ impl State {
         let len = self.line_len(self.cursor.0);
         if self.cursor.1 < len {
             self.cursor.1 += 1;
+            self.scroll_x_into_view();
         } else if self.cursor.0 + 1 < self.lines.len() {
             self.cursor.0 += 1;
             self.cursor.1 = 0;

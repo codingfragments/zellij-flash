@@ -461,3 +461,8 @@ request_permission(&[
   highlighted for orientation.
 - **Config for key bindings**: currently hardcoded.
 - **Mouse support**: click to place cursor or anchor.
+- **Open selection in editor**: a key (e.g. `o` or `e`) that writes the
+  selected text to a temp file and opens it in `$EDITOR` (terminal editors)
+  or a desktop editor. Would need `run_command` + the source pane or a new
+  floating pane. Shell editors (nvim, helix) and desktop editors (VSCode,
+  Zed) may need different launch strategies.

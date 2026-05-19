@@ -378,38 +378,47 @@ selection spans scrolled content correctly.
 
 ---
 
-### Phase 5 — nvim basic navigation
+### Phase 5a — nvim word motions
 
-**Goal:** word-motion keys (`w`, `W`, `e`, `E`) and `/` search — the most-used
-nvim navigation primitives that make cursor placement fast without needing the
-flash jump.
-
-**What to build:**
-
-#### Word motions
+**Goal:** `w W b B e E 0 $` — the core nvim cursor movement primitives that make
+precise cursor placement fast without needing the flash jump. All motions work
+both in and out of selection mode: anchor stays fixed, cursor moves, selection
+extends.
 
 | Key | Moves to |
 |---|---|
-| `w` | Start of next word (punctuation-aware; like nvim `w`) |
-| `W` | Start of next WORD (whitespace-separated; like nvim `W`) |
+| `w` | Start of next word |
+| `W` | Start of next WORD |
+| `b` | Start of previous word |
+| `B` | Start of previous WORD |
 | `e` | End of current / next word |
 | `E` | End of current / next WORD |
+| `0` | Col 0 (start of line) |
+| `$` | Last char of line (end of line) |
 
-Word definition: a run of `[a-zA-Z0-9_]` chars. WORD: any non-whitespace run.
-Motions wrap across lines (same stream model as left/right arrows). With anchor
-active, extend selection.
+Word = run of `[a-zA-Z0-9_]` chars. WORD = any non-whitespace run.
+All motions wrap across lines (same stream model as arrow keys).
 
-#### `/` search
+**Testable:** `w`/`b` navigate between word boundaries, `W`/`B` between
+whitespace tokens, `0`/`$` jump to line edges. With anchor active, all
+motions extend selection.
+
+---
+
+### Phase 5b — `/` search
+
+**Goal:** incremental substring search across the full captured buffer.
+Only available outside selection mode — entering `/` while anchor is active
+is a no-op (avoids confusing UX of search + extend-selection interaction).
 
 - `/` enters `Mode::Search { query: String, matches: Vec<(usize, usize)>, current: usize }`.
-- User types a pattern (plain substring, case-insensitive for now).
+- User types a plain substring (case-insensitive).
 - All matches highlighted across all captured lines.
 - `n` / `N` jump to next / previous match (wrapping). Cursor re-centers.
-- `Enter` or `Esc` exits search mode; cursor stays at current match.
-- With anchor active, `/` + `n`/`N` extend the selection to each successive match.
+- `Enter` or `Esc` exits search; cursor stays at current match position.
 
-**Testable:** `w` moves through words, `W` through whitespace tokens, `/foo`
-highlights all occurrences, `n`/`N` navigate between them.
+**Testable:** `/foo` highlights all occurrences, `n`/`N` navigate between
+them, `Esc` exits leaving cursor at last match.
 
 ---
 

@@ -72,6 +72,15 @@ fn default_profiles() -> Vec<Profile> {
     vec![Profile::Viewport, Profile::Lines(200), Profile::Lines(2000)]
 }
 
+// ── Mode ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+enum Mode {
+    Normal,
+    /// Waiting for `y` / Esc before inserting multi-line text into source pane.
+    Confirm { text: String },
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct State {
@@ -94,6 +103,9 @@ struct State {
     content_rows: usize,
     /// Size string from keybind config ("90%x85%"), applied once on open.
     pending_size: Option<String>,
+    mode: Mode,
+    /// Transient status message (warning, confirmation). Cleared on next keypress.
+    message: Option<String>,
     render_buffer: Option<Buffer>,
 }
 
@@ -112,6 +124,8 @@ impl Default for State {
             anchor: None,
             scroll_y: 0,
             content_rows: 24,
+            mode: Mode::Normal,
+            message: None,
             pending_size: None,
             render_buffer: None,
         }
@@ -367,9 +381,30 @@ impl State {
     // ── Key handling ──────────────────────────────────────────────────────────
 
     fn handle_key(&mut self, key: KeyWithModifier) -> bool {
+        // Any keypress clears the transient message.
+        self.message = None;
+
+        let only_shift = key.has_modifiers(&[KeyModifier::Shift])
+            && key.key_modifiers.len() == 1;
+
+        // Confirm mode: waiting for y/Esc before inserting multi-line text.
+        if let Mode::Confirm { text } = self.mode.clone() {
+            return match key.bare_key {
+                BareKey::Char('y') if key.has_no_modifiers() => {
+                    self.do_insert(text);
+                    false
+                }
+                BareKey::Esc => {
+                    self.mode = Mode::Normal;
+                    true
+                }
+                _ => true,
+            };
+        }
+
         match key.bare_key {
             BareKey::Esc => {
-                // Cancel chain: selection first, then close.
+                // Cancel chain: confirm → selection → close.
                 if self.anchor.is_some() {
                     self.anchor = None;
                     true
@@ -393,8 +428,58 @@ impl State {
                 }
                 true
             }
+            BareKey::Enter if only_shift => {
+                self.action_insert();
+                true
+            }
+            BareKey::Enter => {
+                self.action_copy();
+                true
+            }
             _ => false,
         }
+    }
+
+    fn action_copy(&mut self) -> bool {
+        match self.selected_text() {
+            Some(text) => {
+                copy_to_clipboard(&text);
+                close_self();
+                false
+            }
+            None => {
+                self.message = Some("No selection — press Space to anchor".into());
+                true
+            }
+        }
+    }
+
+    fn action_insert(&mut self) -> bool {
+        let Some(text) = self.selected_text() else {
+            self.message = Some("No selection — press Space to anchor".into());
+            return true;
+        };
+        if text.contains('\n') {
+            let line_count = text.lines().count();
+            self.mode = Mode::Confirm {
+                text: text.clone(),
+            };
+            self.message = Some(format!(
+                "Insert {} lines into pane?  y:confirm  Esc:cancel",
+                line_count
+            ));
+            true
+        } else {
+            self.do_insert(text);
+            false
+        }
+    }
+
+    fn do_insert(&mut self, text: String) {
+        if let Some(pane_id) = self.source_pane {
+            write_chars_to_pane_id(&text, PaneId::Terminal(pane_id));
+        }
+        close_self();
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
@@ -511,8 +596,16 @@ impl State {
         }
         let line1 = Line::from(line1_spans);
 
-        let line2 = if self.anchor.is_some() {
+        let line2 = if let Mode::Confirm { .. } = &self.mode {
             Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    self.message.clone().unwrap_or_default(),
+                    Style::default().fg(THEME_SEL_INDICATOR).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        } else if self.anchor.is_some() {
+            let mut spans = vec![
                 Span::raw(" "),
                 Span::styled("↑↓←→", bold),
                 Span::raw(":extend  "),
@@ -524,9 +617,17 @@ impl State {
                 Span::raw(":clear-sel  "),
                 Span::styled("Esc", bold),
                 Span::raw(":clear-sel"),
-            ])
+            ];
+            if let Some(msg) = &self.message {
+                spans.push(Span::raw("    "));
+                spans.push(Span::styled(
+                    msg.clone(),
+                    Style::default().fg(THEME_SEL_INDICATOR),
+                ));
+            }
+            Line::from(spans)
         } else {
-            Line::from(vec![
+            let mut spans = vec![
                 Span::raw(" "),
                 Span::styled("↑↓←→", bold),
                 Span::raw(":move  "),
@@ -540,7 +641,15 @@ impl State {
                 Span::raw(":copy  "),
                 Span::styled("Esc", bold),
                 Span::raw(":close"),
-            ])
+            ];
+            if let Some(msg) = &self.message {
+                spans.push(Span::raw("    "));
+                spans.push(Span::styled(
+                    msg.clone(),
+                    Style::default().fg(THEME_SEL_INDICATOR),
+                ));
+            }
+            Line::from(spans)
         };
 
         Paragraph::new(vec![line1, line2])
@@ -560,6 +669,36 @@ impl State {
         } else {
             Some((cursor, anchor))
         }
+    }
+
+    /// Extract the selected text from `lines` as a plain string with newlines.
+    fn selected_text(&self) -> Option<String> {
+        let ((sl, sc), (el, ec)) = self.selection_range()?;
+
+        if sl == el {
+            let chars: Vec<char> = self.lines.get(sl)?.chars().collect();
+            let start = sc.min(chars.len());
+            let end = (ec + 1).min(chars.len());
+            return Some(chars[start..end].iter().collect());
+        }
+
+        let mut out = String::new();
+        if let Some(line) = self.lines.get(sl) {
+            let chars: Vec<char> = line.chars().collect();
+            out.extend(chars[sc.min(chars.len())..].iter());
+            out.push('\n');
+        }
+        for l in sl + 1..el {
+            if let Some(line) = self.lines.get(l) {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        if let Some(line) = self.lines.get(el) {
+            let chars: Vec<char> = line.chars().collect();
+            out.extend(chars[..(ec + 1).min(chars.len())].iter());
+        }
+        Some(out)
     }
 
     /// Returns (line_count, char_count) for the active selection, or None.

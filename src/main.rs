@@ -10,7 +10,46 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use zellij_tile::prelude::*;
 
-const DEFAULT_LINES: usize = 200;
+// ── Profile ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy)]
+enum Profile {
+    Viewport,
+    Lines(usize),
+}
+
+impl Profile {
+    fn label(&self) -> String {
+        match self {
+            Profile::Viewport => "viewport".to_string(),
+            Profile::Lines(n) => n.to_string(),
+        }
+    }
+}
+
+fn parse_profiles(s: &str) -> Vec<Profile> {
+    let mut out: Vec<Profile> = s
+        .split(',')
+        .filter_map(|p| {
+            let p = p.trim();
+            if p.eq_ignore_ascii_case("viewport") {
+                Some(Profile::Viewport)
+            } else {
+                p.parse::<usize>().ok().filter(|&n| n > 0).map(Profile::Lines)
+            }
+        })
+        .collect();
+    if out.is_empty() {
+        out = default_profiles();
+    }
+    out
+}
+
+fn default_profiles() -> Vec<Profile> {
+    vec![Profile::Viewport, Profile::Lines(200), Profile::Lines(2000)]
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
 
 struct State {
     source_pane: Option<u32>,
@@ -19,13 +58,16 @@ struct State {
     own_plugin_id: u32,
     lines: Vec<String>,
     extraction_done: bool,
+    profiles: Vec<Profile>,
+    current_profile: usize,
     /// Logical cursor position: (line index, char col) into `lines`.
     cursor: (usize, usize),
     /// Index of the first visible line in the content viewport.
     scroll_y: usize,
-    /// Content area height in rows — updated each render, used by key handlers
-    /// to compute half-page jumps without passing rows through the call chain.
+    /// Content area height — updated each render, used for half-page math.
     content_rows: usize,
+    /// Size string from keybind config ("90%x85%"), applied once on open.
+    pending_size: Option<String>,
     render_buffer: Option<Buffer>,
 }
 
@@ -38,9 +80,12 @@ impl Default for State {
             own_plugin_id: 0,
             lines: Vec::new(),
             extraction_done: false,
+            profiles: default_profiles(),
+            current_profile: 0,
             cursor: (0, 0),
             scroll_y: 0,
             content_rows: 24,
+            pending_size: None,
             render_buffer: None,
         }
     }
@@ -49,7 +94,7 @@ impl Default for State {
 register_plugin!(State);
 
 impl ZellijPlugin for State {
-    fn load(&mut self, _configuration: BTreeMap<String, String>) {
+    fn load(&mut self, configuration: BTreeMap<String, String>) {
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
@@ -64,12 +109,22 @@ impl ZellijPlugin for State {
             EventType::PermissionRequestResult,
         ]);
         self.own_plugin_id = get_plugin_ids().plugin_id;
+
+        if let Some(p) = configuration.get("profiles") {
+            self.profiles = parse_profiles(p);
+        }
+
+        // Store size string for use once ChangeApplicationState is granted.
+        if let Some(size) = configuration.get("size") {
+            self.pending_size = Some(size.clone());
+        }
     }
 
     fn update(&mut self, event: Event) -> bool {
         match event {
             Event::PermissionRequestResult(_) => {
                 rename_plugin_pane(self.own_plugin_id, "zellij-flash");
+                self.apply_size();
                 self.try_grab();
                 true
             }
@@ -80,9 +135,6 @@ impl ZellijPlugin for State {
                 false
             }
             Event::PaneUpdate(manifest) => {
-                // Update hint BEFORE pick — the terminal pane briefly appears
-                // focused in the transitional PaneUpdate as the plugin opens.
-                // Missing this window means falling back to a lower-priority tier.
                 let active_panes: Box<dyn Iterator<Item = &PaneInfo>> =
                     match self.active_tab_index {
                         Some(idx) => match manifest.panes.get(&idx) {
@@ -125,7 +177,6 @@ impl ZellijPlugin for State {
             height: rows as u16,
         };
 
-        // Footer = 2 content lines + 2 border lines = 4 rows.
         self.content_rows = rows.saturating_sub(4).max(1);
 
         let mut buf = match self.render_buffer.take() {
@@ -143,6 +194,32 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    // ── Config ────────────────────────────────────────────────────────────────
+
+    fn apply_size(&self) {
+        let Some(ref size_str) = self.pending_size else { return };
+        let parts: Vec<&str> = size_str.splitn(2, 'x').collect();
+        if parts.len() != 2 { return; }
+        let width = parts[0].trim().to_string();
+        let height = parts[1].trim().to_string();
+        let x = center_x_for_width(&width);
+        if let Some(coords) = FloatingPaneCoordinates::new(
+            x,
+            None,
+            Some(width),
+            Some(height),
+            None,
+            None,
+        ) {
+            change_floating_panes_coordinates(vec![(
+                PaneId::Plugin(self.own_plugin_id),
+                coords,
+            )]);
+        }
+    }
+
+    // ── Grab ─────────────────────────────────────────────────────────────────
+
     fn try_grab(&mut self) {
         if self.extraction_done {
             return;
@@ -151,25 +228,32 @@ impl State {
             return;
         };
 
-        let Ok(contents) = get_pane_scrollback(PaneId::Terminal(source), true) else {
+        let profile = self.profiles.get(self.current_profile).copied()
+            .unwrap_or(Profile::Lines(200));
+
+        let want_full = matches!(profile, Profile::Lines(_));
+        let Ok(contents) = get_pane_scrollback(PaneId::Terminal(source), want_full) else {
             return;
         };
 
-        let mut all: Vec<String> = contents
-            .lines_above_viewport
-            .into_iter()
-            .chain(contents.viewport)
-            .collect();
+        let mut all: Vec<String> = match profile {
+            Profile::Viewport => contents.viewport,
+            Profile::Lines(_) => contents
+                .lines_above_viewport
+                .into_iter()
+                .chain(contents.viewport)
+                .collect(),
+        };
 
-        if all.len() > DEFAULT_LINES {
-            let start = all.len() - DEFAULT_LINES;
-            all.drain(..start);
+        if let Profile::Lines(cap) = profile {
+            if all.len() > cap {
+                all.drain(..all.len() - cap);
+            }
         }
 
         self.lines = all;
         self.extraction_done = true;
 
-        // Place cursor at the last line, col 0.
         let last = self.lines.len().saturating_sub(1);
         self.cursor = (last, 0);
         self.scroll_y = last.saturating_sub(self.content_rows.saturating_sub(1));
@@ -182,18 +266,14 @@ impl State {
     }
 
     fn move_up(&mut self) {
-        if self.cursor.0 == 0 {
-            return;
-        }
+        if self.cursor.0 == 0 { return; }
         self.cursor.0 -= 1;
         self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
         self.scroll_cursor_into_view();
     }
 
     fn move_down(&mut self) {
-        if self.cursor.0 + 1 >= self.lines.len() {
-            return;
-        }
+        if self.cursor.0 + 1 >= self.lines.len() { return; }
         self.cursor.0 += 1;
         self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
         self.scroll_cursor_into_view();
@@ -203,7 +283,6 @@ impl State {
         if self.cursor.1 > 0 {
             self.cursor.1 -= 1;
         } else if self.cursor.0 > 0 {
-            // Wrap to end of previous line.
             self.cursor.0 -= 1;
             self.cursor.1 = self.line_len(self.cursor.0);
             self.scroll_cursor_into_view();
@@ -215,7 +294,6 @@ impl State {
         if self.cursor.1 < len {
             self.cursor.1 += 1;
         } else if self.cursor.0 + 1 < self.lines.len() {
-            // Wrap to start of next line.
             self.cursor.0 += 1;
             self.cursor.1 = 0;
             self.scroll_cursor_into_view();
@@ -237,7 +315,6 @@ impl State {
         self.recenter_scroll();
     }
 
-    /// Keep scroll_y minimal to show the cursor — called after single-line moves.
     fn scroll_cursor_into_view(&mut self) {
         if self.cursor.0 < self.scroll_y {
             self.scroll_y = self.cursor.0;
@@ -246,26 +323,31 @@ impl State {
         }
     }
 
-    /// Center scroll_y on the cursor — called after half-page jumps.
     fn recenter_scroll(&mut self) {
-        let half = self.content_rows / 2;
-        self.scroll_y = self.cursor.0.saturating_sub(half);
+        self.scroll_y = self.cursor.0.saturating_sub(self.content_rows / 2);
+    }
+
+    // ── Profile cycling ───────────────────────────────────────────────────────
+
+    fn cycle_profile(&mut self) {
+        if self.profiles.len() <= 1 { return; }
+        self.current_profile = (self.current_profile + 1) % self.profiles.len();
+        self.extraction_done = false;
+        self.try_grab();
     }
 
     // ── Key handling ──────────────────────────────────────────────────────────
 
     fn handle_key(&mut self, key: KeyWithModifier) -> bool {
         match key.bare_key {
-            BareKey::Esc => {
-                close_self();
-                false
-            }
-            BareKey::Up => { self.move_up(); true }
-            BareKey::Down => { self.move_down(); true }
-            BareKey::Left => { self.move_left(); true }
-            BareKey::Right => { self.move_right(); true }
-            BareKey::PageUp => { self.page_up(); true }
-            BareKey::PageDown => { self.page_down(); true }
+            BareKey::Esc => { close_self(); false }
+            BareKey::Up        => { self.move_up();    true }
+            BareKey::Down      => { self.move_down();  true }
+            BareKey::Left      => { self.move_left();  true }
+            BareKey::Right     => { self.move_right(); true }
+            BareKey::PageUp    => { self.page_up();    true }
+            BareKey::PageDown  => { self.page_down();  true }
+            BareKey::Char('g') if key.has_no_modifiers() => { self.cycle_profile(); true }
             _ => false,
         }
     }
@@ -312,21 +394,14 @@ impl State {
         let visible_end = (scroll_y + viewport_h).min(total);
         let visible = &self.lines[scroll_y..visible_end];
 
-        // Gutter width: digits of the largest distance visible + marker chars.
         let max_dist = viewport_h.saturating_sub(1);
         let num_w = max_dist.to_string().len().max(1);
-        let gutter_w = num_w + 2; // number + "► " or "  "
+        let gutter_w = num_w + 2;
         let avail_w = (inner.width as usize).saturating_sub(gutter_w);
 
-        let gutter_dim = Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM);
-        let gutter_cursor_style = Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD);
-        let cursor_cell_style = Style::default()
-            .bg(Color::White)
-            .fg(Color::Black);
+        let gutter_dim = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
+        let gutter_cursor_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let cursor_cell_style = Style::default().bg(Color::White).fg(Color::Black);
 
         let content_lines: Vec<Line<'static>> = visible
             .iter()
@@ -347,33 +422,21 @@ impl State {
                     if is_cursor_line { gutter_cursor_style } else { gutter_dim },
                 );
 
-                // Build content span(s). On the cursor line split at cursor_col
-                // to inject the highlighted cursor cell.
                 let chars: Vec<char> = text.chars().take(avail_w).collect();
 
                 if !is_cursor_line {
-                    let s: String = chars.into_iter().collect();
-                    return Line::from(vec![gutter, Span::raw(s)]);
+                    return Line::from(vec![gutter, Span::raw(chars.into_iter().collect::<String>())]);
                 }
 
-                // Cursor line: split into before / cursor-char / after.
                 let col = cursor_col.min(chars.len());
                 let before: String = chars[..col].iter().collect();
                 let cursor_ch = chars.get(col).copied().unwrap_or(' ');
-                let after: String = if col + 1 <= chars.len() {
-                    chars[col + 1..].iter().collect()
-                } else {
-                    String::new()
-                };
+                let after: String = chars.get(col + 1..).unwrap_or(&[]).iter().collect();
 
                 let mut spans = vec![gutter];
-                if !before.is_empty() {
-                    spans.push(Span::raw(before));
-                }
+                if !before.is_empty() { spans.push(Span::raw(before)); }
                 spans.push(Span::styled(cursor_ch.to_string(), cursor_cell_style));
-                if !after.is_empty() {
-                    spans.push(Span::raw(after));
-                }
+                if !after.is_empty() { spans.push(Span::raw(after)); }
                 Line::from(spans)
             })
             .collect();
@@ -385,10 +448,15 @@ impl State {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().fg(Color::DarkGray);
 
+        let profile_label = self.profiles
+            .get(self.current_profile)
+            .map(|p| p.label())
+            .unwrap_or_else(|| "?".to_string());
+
         let (cline, ccol) = self.cursor;
         let line1 = Line::from(vec![
             Span::raw(" "),
-            Span::styled("[200]", dim),
+            Span::styled(format!("[{}]", profile_label), dim),
             Span::raw("  "),
             Span::styled(format!("{} lines", self.lines.len()), dim),
             Span::raw("  "),
@@ -401,6 +469,8 @@ impl State {
             Span::raw(":move  "),
             Span::styled("PgUp/Dn", bold),
             Span::raw(":half-page  "),
+            Span::styled("g", bold),
+            Span::raw(":depth  "),
             Span::styled("Space", bold),
             Span::raw(":select  "),
             Span::styled("Enter", bold),
@@ -413,4 +483,14 @@ impl State {
             .block(Block::default().borders(Borders::ALL))
             .render(area, buf);
     }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Compute centered x for a percentage width string, e.g. "90%" → Some("5%").
+/// Returns None for non-percentage or unusual values.
+fn center_x_for_width(width: &str) -> Option<String> {
+    let pct: u32 = width.strip_suffix('%')?.parse().ok()?;
+    if pct >= 100 { return Some("0%".to_string()); }
+    Some(format!("{}%", (100 - pct) / 2))
 }

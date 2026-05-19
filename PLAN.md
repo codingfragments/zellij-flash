@@ -131,12 +131,14 @@ Linear (stream) selection, char-precise. State: `anchor: Option<(usize, usize)>`
 ### Enter / Shift-Enter
 
 **Enter (copy):**
+
 - If selection is active: copy selected text to clipboard as-is (newlines
   preserved), close plugin.
 - If no selection: show status warning in footer ("No selection — Space to
   anchor"), stay open.
 
 **Shift-Enter (insert):**
+
 - If selection is active and text contains no newlines: write to source pane via
   `write_chars_to_pane_id`, close plugin.
 - If selection contains newlines: enter `Mode::Confirm` — footer shows inline
@@ -230,6 +232,7 @@ code from an unbuilt later phase.
 it as plain text with a relative line-number gutter. Esc closes. Nothing else.
 
 **What to build:**
+
 - Cargo workspace, `zellij-tile` dependency, `wasm32-wasi` target.
 - `State` struct: `source_pane`, `last_focused_non_plugin`, `active_tab_index`,
   `own_plugin_id`, `lines: Vec<String>`, `render_buffer`.
@@ -252,6 +255,7 @@ scrollback appears and Esc closes.
 PgUp/PgDn. Cursor line re-centers on half-page jump.
 
 **What to build:**
+
 - `State` adds: `cursor: (usize, usize)`, `scroll_y: usize`.
 - Cursor starts at `(lines.len().saturating_sub(1), 0)`.
 - Arrow keys: up/down move one line, left/right wrap at line edges.
@@ -271,6 +275,7 @@ PgUp/PgDn. Cursor line re-centers on half-page jump.
 footer, cycle with `g`.
 
 **What to build:**
+
 - Parse `configuration.get("profiles")` → `Vec<Profile>` where `Profile` is
   `Viewport` or `Lines(usize)`.
 - Default: `[Viewport, Lines(200), Lines(2000)]`.
@@ -290,6 +295,7 @@ footer, cycle with `g`.
 Selected range is highlighted. Esc clears selection.
 
 **What to build:**
+
 - `anchor: Option<(usize, usize)>` on State.
 - Space: toggle anchor (set if None, clear if Some).
 - Render: compute selected byte range from anchor + cursor (order-independent),
@@ -307,6 +313,7 @@ Selected range is highlighted. Esc clears selection.
 pane (with newline approval dialog); both warn if no selection.
 
 **What to build:**
+
 - `Mode::Confirm { text: String }` variant.
 - Enter: if anchor, copy selected text → `copy_to_clipboard` → `close_self`.
   If no anchor, footer warning, stay open.
@@ -326,6 +333,7 @@ line approval dialog appears and both paths (confirm/cancel) work.
 label to jump cursor there.
 
 **What to build:**
+
 - `Mode::Jump { typed: String, labels: Vec<(usize, usize, char)> }` variant.
   Each label entry is `(line, col, label_char)`.
 - On each keystroke in Jump mode: find all occurrences of `typed` prefix in
@@ -347,6 +355,7 @@ press label, cursor lands there.
 to jump to that line.
 
 **What to build:**
+
 - `Mode::LineJump { labels: Vec<(usize, char)> }` — one label per visible line.
 - On enter: assign labels by distance from cursor row. Render labels in the
   line-number gutter (replacing the number display).
@@ -364,6 +373,7 @@ to jump to that line.
 scrolling. Arrow left/right when at line edges scrolls the viewport.
 
 **What to build:**
+
 - `scroll_x: usize` on State.
 - `max_line_width()` computed from content.
 - Right arrow at end-of-line: if `scroll_x + viewport_width < max_line_width`,
@@ -466,3 +476,4 @@ request_permission(&[
   or a desktop editor. Would need `run_command` + the source pane or a new
   floating pane. Shell editors (nvim, helix) and desktop editors (VSCode,
   Zed) may need different launch strategies.
+- **Overlay hack**: it would be interesting to try if the pane could open up exactly on top of the pane, it would almost look like an overlay that way :)

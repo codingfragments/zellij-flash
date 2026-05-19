@@ -71,4 +71,4 @@ See [`doc/keybindings.md`](doc/keybindings.md) for the full keybinding reference
 
 ## Status
 
-Under active development. See [`PLAN.md`](PLAN.md) for the phase roadmap.
+v0.1.0 released. See [`doc/plan/mvp.md`](doc/plan/mvp.md) for what shipped and why, and [`doc/plan/future.md`](doc/plan/future.md) for the ideas backlog.

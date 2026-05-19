@@ -10,6 +10,29 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use zellij_tile::prelude::*;
 
+// ── Theme (Catppuccin Macchiato defaults) ─────────────────────────────────────
+// All colors are defined here as named semantic roles so they can be made
+// user-configurable in a future phase without hunting through render code.
+
+const C_BASE:     Color = Color::Rgb(36,  39,  58);  // #24273a — background
+const C_OVERLAY0: Color = Color::Rgb(110, 115, 141); // #6e738d — muted / dim
+const C_TEXT:     Color = Color::Rgb(202, 211, 245); // #cad3f5 — normal text / cursor bg
+const C_YELLOW:   Color = Color::Rgb(238, 212, 159); // #eed49f — gutter cursor marker
+const C_BLUE:     Color = Color::Rgb(138, 173, 244); // #8aadf4 — selection bg
+const C_TEAL:     Color = Color::Rgb(139, 213, 202); // #8bd5ca — SEL indicator
+const C_SUBTEXT1: Color = Color::Rgb(184, 192, 224); // #b8c0e0 — footer hints / bold keys
+
+// Semantic roles → palette entries (single place to remap when config lands).
+const THEME_SEL_BG:          Color = C_BLUE;
+const THEME_SEL_FG:          Color = C_BASE;
+const THEME_CURSOR_BG:       Color = C_TEXT;
+const THEME_CURSOR_FG:       Color = C_BASE;
+const THEME_GUTTER_CURSOR:   Color = C_YELLOW;
+const THEME_GUTTER_DIM:      Color = C_OVERLAY0;
+const THEME_SEL_INDICATOR:   Color = C_TEAL;
+const THEME_FOOTER_DIM:      Color = C_OVERLAY0;
+const THEME_FOOTER_KEY:      Color = C_SUBTEXT1;
+
 // ── Profile ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +85,9 @@ struct State {
     current_profile: usize,
     /// Logical cursor position: (line index, char col) into `lines`.
     cursor: (usize, usize),
+    /// Selection anchor. When Some, the selection spans from anchor to cursor
+    /// (order-independent). None means no active selection.
+    anchor: Option<(usize, usize)>,
     /// Index of the first visible line in the content viewport.
     scroll_y: usize,
     /// Content area height — updated each render, used for half-page math.
@@ -83,6 +109,7 @@ impl Default for State {
             profiles: default_profiles(),
             current_profile: 0,
             cursor: (0, 0),
+            anchor: None,
             scroll_y: 0,
             content_rows: 24,
             pending_size: None,
@@ -332,6 +359,7 @@ impl State {
     fn cycle_profile(&mut self) {
         if self.profiles.len() <= 1 { return; }
         self.current_profile = (self.current_profile + 1) % self.profiles.len();
+        self.anchor = None;
         self.extraction_done = false;
         self.try_grab();
     }
@@ -340,7 +368,16 @@ impl State {
 
     fn handle_key(&mut self, key: KeyWithModifier) -> bool {
         match key.bare_key {
-            BareKey::Esc => { close_self(); false }
+            BareKey::Esc => {
+                // Cancel chain: selection first, then close.
+                if self.anchor.is_some() {
+                    self.anchor = None;
+                    true
+                } else {
+                    close_self();
+                    false
+                }
+            }
             BareKey::Up        => { self.move_up();    true }
             BareKey::Down      => { self.move_down();  true }
             BareKey::Left      => { self.move_left();  true }
@@ -348,6 +385,14 @@ impl State {
             BareKey::PageUp    => { self.page_up();    true }
             BareKey::PageDown  => { self.page_down();  true }
             BareKey::Char('g') if key.has_no_modifiers() => { self.cycle_profile(); true }
+            BareKey::Char(' ') if key.has_no_modifiers() => {
+                if self.anchor.is_some() {
+                    self.anchor = None;
+                } else {
+                    self.anchor = Some(self.cursor);
+                }
+                true
+            }
             _ => false,
         }
     }
@@ -357,7 +402,7 @@ impl State {
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
         if area.width < 20 || area.height < 5 {
             Paragraph::new("too small")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(THEME_FOOTER_DIM))
                 .render(area, buf);
             return;
         }
@@ -380,7 +425,7 @@ impl State {
             } else {
                 "Loading…"
             })
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(THEME_FOOTER_DIM))
             .render(inner, buf);
             return;
         }
@@ -399,9 +444,10 @@ impl State {
         let gutter_w = num_w + 2;
         let avail_w = (inner.width as usize).saturating_sub(gutter_w);
 
-        let gutter_dim = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
-        let gutter_cursor_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-        let cursor_cell_style = Style::default().bg(Color::White).fg(Color::Black);
+        let sel = self.selection_range();
+
+        let gutter_dim = Style::default().fg(THEME_GUTTER_DIM).add_modifier(Modifier::DIM);
+        let gutter_cursor_style = Style::default().fg(THEME_GUTTER_CURSOR).add_modifier(Modifier::BOLD);
 
         let content_lines: Vec<Line<'static>> = visible
             .iter()
@@ -423,20 +469,11 @@ impl State {
                 );
 
                 let chars: Vec<char> = text.chars().take(avail_w).collect();
-
-                if !is_cursor_line {
-                    return Line::from(vec![gutter, Span::raw(chars.into_iter().collect::<String>())]);
-                }
-
-                let col = cursor_col.min(chars.len());
-                let before: String = chars[..col].iter().collect();
-                let cursor_ch = chars.get(col).copied().unwrap_or(' ');
-                let after: String = chars.get(col + 1..).unwrap_or(&[]).iter().collect();
+                let sel_range = sel.and_then(|(s, e)| sel_range_for_line(s, e, abs, chars.len()));
+                let cur_col = if is_cursor_line { Some(cursor_col) } else { None };
 
                 let mut spans = vec![gutter];
-                if !before.is_empty() { spans.push(Span::raw(before)); }
-                spans.push(Span::styled(cursor_ch.to_string(), cursor_cell_style));
-                if !after.is_empty() { spans.push(Span::raw(after)); }
+                spans.extend(build_line_spans(&chars, sel_range, cur_col));
                 Line::from(spans)
             })
             .collect();
@@ -445,8 +482,9 @@ impl State {
     }
 
     fn render_footer(&self, area: Rect, buf: &mut Buffer) {
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        let dim = Style::default().fg(Color::DarkGray);
+        let bold = Style::default().fg(THEME_FOOTER_KEY).add_modifier(Modifier::BOLD);
+        let dim = Style::default().fg(THEME_FOOTER_DIM);
+        let sel_style = Style::default().fg(THEME_SEL_INDICATOR).add_modifier(Modifier::BOLD);
 
         let profile_label = self.profiles
             .get(self.current_profile)
@@ -454,34 +492,89 @@ impl State {
             .unwrap_or_else(|| "?".to_string());
 
         let (cline, ccol) = self.cursor;
-        let line1 = Line::from(vec![
+
+        // Status line: profile, line count, cursor pos, selection info.
+        let mut line1_spans = vec![
             Span::raw(" "),
             Span::styled(format!("[{}]", profile_label), dim),
             Span::raw("  "),
             Span::styled(format!("{} lines", self.lines.len()), dim),
             Span::raw("  "),
             Span::styled(format!("{}:{}", cline + 1, ccol + 1), dim),
-        ]);
+        ];
+        if let Some((nlines, nchars)) = self.selection_info() {
+            line1_spans.push(Span::raw("  "));
+            line1_spans.push(Span::styled(
+                format!("SEL {} lines {} chars", nlines, nchars),
+                sel_style,
+            ));
+        }
+        let line1 = Line::from(line1_spans);
 
-        let line2 = Line::from(vec![
-            Span::raw(" "),
-            Span::styled("↑↓←→", bold),
-            Span::raw(":move  "),
-            Span::styled("PgUp/Dn", bold),
-            Span::raw(":half-page  "),
-            Span::styled("g", bold),
-            Span::raw(":depth  "),
-            Span::styled("Space", bold),
-            Span::raw(":select  "),
-            Span::styled("Enter", bold),
-            Span::raw(":copy  "),
-            Span::styled("Esc", bold),
-            Span::raw(":close"),
-        ]);
+        let line2 = if self.anchor.is_some() {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("↑↓←→", bold),
+                Span::raw(":extend  "),
+                Span::styled("Enter", bold),
+                Span::raw(":copy  "),
+                Span::styled("⇧Enter", bold),
+                Span::raw(":insert  "),
+                Span::styled("Space", bold),
+                Span::raw(":clear-sel  "),
+                Span::styled("Esc", bold),
+                Span::raw(":clear-sel"),
+            ])
+        } else {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("↑↓←→", bold),
+                Span::raw(":move  "),
+                Span::styled("PgUp/Dn", bold),
+                Span::raw(":half-page  "),
+                Span::styled("Space", bold),
+                Span::raw(":select  "),
+                Span::styled("g", bold),
+                Span::raw(":depth  "),
+                Span::styled("Enter", bold),
+                Span::raw(":copy  "),
+                Span::styled("Esc", bold),
+                Span::raw(":close"),
+            ])
+        };
 
         Paragraph::new(vec![line1, line2])
             .block(Block::default().borders(Borders::ALL))
             .render(area, buf);
+    }
+
+    // ── Selection helpers ─────────────────────────────────────────────────────
+
+    /// Normalized selection range: (start, end) where start ≤ end in stream
+    /// order. Returns None when no anchor is set.
+    fn selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
+        let anchor = self.anchor?;
+        let cursor = self.cursor;
+        if anchor <= cursor {
+            Some((anchor, cursor))
+        } else {
+            Some((cursor, anchor))
+        }
+    }
+
+    /// Returns (line_count, char_count) for the active selection, or None.
+    fn selection_info(&self) -> Option<(usize, usize)> {
+        let ((sl, sc), (el, ec)) = self.selection_range()?;
+        let lines = el - sl + 1;
+        let chars = if sl == el {
+            ec.saturating_sub(sc) + 1
+        } else {
+            let first = self.line_len(sl).saturating_sub(sc) + 1; // +1 for newline
+            let last = ec + 1;
+            let mid: usize = (sl + 1..el).map(|l| self.line_len(l) + 1).sum();
+            first + mid + last
+        };
+        Some((lines, chars))
     }
 }
 
@@ -493,4 +586,79 @@ fn center_x_for_width(width: &str) -> Option<String> {
     let pct: u32 = width.strip_suffix('%')?.parse().ok()?;
     if pct >= 100 { return Some("0%".to_string()); }
     Some(format!("{}%", (100 - pct) / 2))
+}
+
+/// Selection col range for a single visible line, given the normalized
+/// selection (start, end). Returns None if this line is outside the selection.
+/// Returned range is (sel_start_col, sel_end_col) in char indices, inclusive.
+fn sel_range_for_line(
+    start: (usize, usize),
+    end: (usize, usize),
+    line: usize,
+    line_len: usize,
+) -> Option<(usize, usize)> {
+    let (sl, sc) = start;
+    let (el, ec) = end;
+    if line < sl || line > el { return None; }
+    let col_start = if line == sl { sc } else { 0 };
+    let col_end   = if line == el { ec } else { line_len.saturating_sub(1) };
+    Some((col_start, col_end))
+}
+
+/// Build ratatui spans for one line of content, applying selection highlight
+/// and cursor cell. Selection range is (start_col, end_col) inclusive in
+/// char indices. cursor_col is Some only for the cursor line.
+fn build_line_spans(
+    chars: &[char],
+    sel: Option<(usize, usize)>,
+    cursor_col: Option<usize>,
+) -> Vec<Span<'static>> {
+    let sel_style    = Style::default().bg(THEME_SEL_BG).fg(THEME_SEL_FG);
+    let cursor_style = Style::default().bg(THEME_CURSOR_BG).fg(THEME_CURSOR_FG);
+
+    let char_style = |i: usize| -> Style {
+        if cursor_col == Some(i) {
+            cursor_style
+        } else if let Some((s, e)) = sel {
+            if i >= s && i <= e { sel_style } else { Style::default() }
+        } else {
+            Style::default()
+        }
+    };
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut run_style = Style::default();
+
+    for (i, &ch) in chars.iter().enumerate() {
+        let s = char_style(i);
+        if s != run_style {
+            if !run.is_empty() {
+                spans.push(Span::styled(run.clone(), run_style));
+                run.clear();
+            }
+            run_style = s;
+        }
+        run.push(ch);
+    }
+    if !run.is_empty() {
+        spans.push(Span::styled(run, run_style));
+    }
+
+    // Cursor past end of line (empty line, or cursor at line_len position).
+    let past_end = cursor_col.map(|c| c >= chars.len()).unwrap_or(false);
+    if past_end {
+        // If the past-end position is also inside the selection, show it selected.
+        let style = if let Some((s, e)) = sel {
+            if chars.len() >= s && chars.len() <= e { sel_style } else { cursor_style }
+        } else {
+            cursor_style
+        };
+        spans.push(Span::styled(" ", style));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::raw(""));
+    }
+    spans
 }

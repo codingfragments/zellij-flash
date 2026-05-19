@@ -67,7 +67,7 @@ with relative line numbers (cursor row = 0, other rows show distance).
 | `Shift-Enter` | Insert selection into source pane, close |
 | `Esc` | Cancel jump → cancel selection → close |
 
-See [`doc/keybindings.md`](doc/keybindings.md) for the full reference.
+See [`doc/keybindings.md`](doc/keybindings.md) for the full keybinding reference and [`doc/configuration.md`](doc/configuration.md) for all configuration options with defaults.
 
 ## Status
 

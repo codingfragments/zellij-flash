@@ -19,6 +19,13 @@ struct State {
     own_plugin_id: u32,
     lines: Vec<String>,
     extraction_done: bool,
+    /// Logical cursor position: (line index, char col) into `lines`.
+    cursor: (usize, usize),
+    /// Index of the first visible line in the content viewport.
+    scroll_y: usize,
+    /// Content area height in rows — updated each render, used by key handlers
+    /// to compute half-page jumps without passing rows through the call chain.
+    content_rows: usize,
     render_buffer: Option<Buffer>,
 }
 
@@ -31,6 +38,9 @@ impl Default for State {
             own_plugin_id: 0,
             lines: Vec::new(),
             extraction_done: false,
+            cursor: (0, 0),
+            scroll_y: 0,
+            content_rows: 24,
             render_buffer: None,
         }
     }
@@ -115,6 +125,9 @@ impl ZellijPlugin for State {
             height: rows as u16,
         };
 
+        // Footer = 2 content lines + 2 border lines = 4 rows.
+        self.content_rows = rows.saturating_sub(4).max(1);
+
         let mut buf = match self.render_buffer.take() {
             Some(mut b) if b.area() == &area => {
                 b.reset();
@@ -155,14 +168,109 @@ impl State {
 
         self.lines = all;
         self.extraction_done = true;
+
+        // Place cursor at the last line, col 0.
+        let last = self.lines.len().saturating_sub(1);
+        self.cursor = (last, 0);
+        self.scroll_y = last.saturating_sub(self.content_rows.saturating_sub(1));
     }
 
-    fn handle_key(&mut self, key: KeyWithModifier) -> bool {
-        if matches!(key.bare_key, BareKey::Esc) {
-            close_self();
-        }
-        false
+    // ── Cursor movement ───────────────────────────────────────────────────────
+
+    fn line_len(&self, line: usize) -> usize {
+        self.lines.get(line).map(|l| l.chars().count()).unwrap_or(0)
     }
+
+    fn move_up(&mut self) {
+        if self.cursor.0 == 0 {
+            return;
+        }
+        self.cursor.0 -= 1;
+        self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
+        self.scroll_cursor_into_view();
+    }
+
+    fn move_down(&mut self) {
+        if self.cursor.0 + 1 >= self.lines.len() {
+            return;
+        }
+        self.cursor.0 += 1;
+        self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
+        self.scroll_cursor_into_view();
+    }
+
+    fn move_left(&mut self) {
+        if self.cursor.1 > 0 {
+            self.cursor.1 -= 1;
+        } else if self.cursor.0 > 0 {
+            // Wrap to end of previous line.
+            self.cursor.0 -= 1;
+            self.cursor.1 = self.line_len(self.cursor.0);
+            self.scroll_cursor_into_view();
+        }
+    }
+
+    fn move_right(&mut self) {
+        let len = self.line_len(self.cursor.0);
+        if self.cursor.1 < len {
+            self.cursor.1 += 1;
+        } else if self.cursor.0 + 1 < self.lines.len() {
+            // Wrap to start of next line.
+            self.cursor.0 += 1;
+            self.cursor.1 = 0;
+            self.scroll_cursor_into_view();
+        }
+    }
+
+    fn page_up(&mut self) {
+        let half = (self.content_rows / 2).max(1);
+        self.cursor.0 = self.cursor.0.saturating_sub(half);
+        self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
+        self.recenter_scroll();
+    }
+
+    fn page_down(&mut self) {
+        let half = (self.content_rows / 2).max(1);
+        let last = self.lines.len().saturating_sub(1);
+        self.cursor.0 = (self.cursor.0 + half).min(last);
+        self.cursor.1 = self.cursor.1.min(self.line_len(self.cursor.0));
+        self.recenter_scroll();
+    }
+
+    /// Keep scroll_y minimal to show the cursor — called after single-line moves.
+    fn scroll_cursor_into_view(&mut self) {
+        if self.cursor.0 < self.scroll_y {
+            self.scroll_y = self.cursor.0;
+        } else if self.cursor.0 >= self.scroll_y + self.content_rows {
+            self.scroll_y = self.cursor.0 + 1 - self.content_rows;
+        }
+    }
+
+    /// Center scroll_y on the cursor — called after half-page jumps.
+    fn recenter_scroll(&mut self) {
+        let half = self.content_rows / 2;
+        self.scroll_y = self.cursor.0.saturating_sub(half);
+    }
+
+    // ── Key handling ──────────────────────────────────────────────────────────
+
+    fn handle_key(&mut self, key: KeyWithModifier) -> bool {
+        match key.bare_key {
+            BareKey::Esc => {
+                close_self();
+                false
+            }
+            BareKey::Up => { self.move_up(); true }
+            BareKey::Down => { self.move_down(); true }
+            BareKey::Left => { self.move_left(); true }
+            BareKey::Right => { self.move_right(); true }
+            BareKey::PageUp => { self.page_up(); true }
+            BareKey::PageDown => { self.page_down(); true }
+            _ => false,
+        }
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────────
 
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
         if area.width < 20 || area.height < 5 {
@@ -172,7 +280,6 @@ impl State {
             return;
         }
 
-        // Footer is 2 content lines + 2 border lines = 4 rows total.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(4)])
@@ -198,52 +305,76 @@ impl State {
 
         let viewport_h = inner.height as usize;
         let total = self.lines.len();
+        let cursor_line = self.cursor.0.min(total.saturating_sub(1));
+        let cursor_col = self.cursor.1;
 
-        // Phase 1a: cursor is pinned to the last line.
-        let cursor_line = total.saturating_sub(1);
+        let scroll_y = self.scroll_y.min(total.saturating_sub(1));
+        let visible_end = (scroll_y + viewport_h).min(total);
+        let visible = &self.lines[scroll_y..visible_end];
 
-        // Scroll so the cursor sits at the bottom of the viewport.
-        let scroll_y = total.saturating_sub(viewport_h);
-        let visible = &self.lines[scroll_y..];
-
-        // Gutter: right-aligned relative number + marker ("► " or "  ").
-        // Width is driven by the largest distance that can appear on screen.
+        // Gutter width: digits of the largest distance visible + marker chars.
         let max_dist = viewport_h.saturating_sub(1);
         let num_w = max_dist.to_string().len().max(1);
-        let gutter_w = num_w + 2; // digits + marker
+        let gutter_w = num_w + 2; // number + "► " or "  "
         let avail_w = (inner.width as usize).saturating_sub(gutter_w);
 
         let gutter_dim = Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM);
-        let gutter_cursor = Style::default()
+        let gutter_cursor_style = Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
+        let cursor_cell_style = Style::default()
+            .bg(Color::White)
+            .fg(Color::Black);
 
         let content_lines: Vec<Line<'static>> = visible
             .iter()
             .enumerate()
             .map(|(i, text)| {
                 let abs = scroll_y + i;
-                let is_cursor = abs == cursor_line;
+                let is_cursor_line = abs == cursor_line;
                 let dist = (abs as isize - cursor_line as isize).unsigned_abs();
 
                 let gutter_str = format!(
                     "{:>w$}{}",
                     dist,
-                    if is_cursor { "► " } else { "  " },
+                    if is_cursor_line { "► " } else { "  " },
                     w = num_w
                 );
                 let gutter = Span::styled(
                     gutter_str,
-                    if is_cursor { gutter_cursor } else { gutter_dim },
+                    if is_cursor_line { gutter_cursor_style } else { gutter_dim },
                 );
 
-                // Truncate to available width (horizontal scroll comes in phase 4).
-                let text_display: String = text.chars().take(avail_w).collect();
-                let content = Span::raw(text_display);
+                // Build content span(s). On the cursor line split at cursor_col
+                // to inject the highlighted cursor cell.
+                let chars: Vec<char> = text.chars().take(avail_w).collect();
 
-                Line::from(vec![gutter, content])
+                if !is_cursor_line {
+                    let s: String = chars.into_iter().collect();
+                    return Line::from(vec![gutter, Span::raw(s)]);
+                }
+
+                // Cursor line: split into before / cursor-char / after.
+                let col = cursor_col.min(chars.len());
+                let before: String = chars[..col].iter().collect();
+                let cursor_ch = chars.get(col).copied().unwrap_or(' ');
+                let after: String = if col + 1 <= chars.len() {
+                    chars[col + 1..].iter().collect()
+                } else {
+                    String::new()
+                };
+
+                let mut spans = vec![gutter];
+                if !before.is_empty() {
+                    spans.push(Span::raw(before));
+                }
+                spans.push(Span::styled(cursor_ch.to_string(), cursor_cell_style));
+                if !after.is_empty() {
+                    spans.push(Span::raw(after));
+                }
+                Line::from(spans)
             })
             .collect();
 
@@ -254,28 +385,26 @@ impl State {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().fg(Color::DarkGray);
 
+        let (cline, ccol) = self.cursor;
         let line1 = Line::from(vec![
             Span::raw(" "),
             Span::styled("[200]", dim),
             Span::raw("  "),
-            Span::styled(
-                format!("{} lines", self.lines.len()),
-                dim,
-            ),
+            Span::styled(format!("{} lines", self.lines.len()), dim),
+            Span::raw("  "),
+            Span::styled(format!("{}:{}", cline + 1, ccol + 1), dim),
         ]);
 
         let line2 = Line::from(vec![
             Span::raw(" "),
+            Span::styled("↑↓←→", bold),
+            Span::raw(":move  "),
+            Span::styled("PgUp/Dn", bold),
+            Span::raw(":half-page  "),
             Span::styled("Space", bold),
             Span::raw(":select  "),
-            Span::styled("s", bold),
-            Span::raw(":jump  "),
-            Span::styled("l", bold),
-            Span::raw(":line  "),
             Span::styled("Enter", bold),
             Span::raw(":copy  "),
-            Span::styled("g", bold),
-            Span::raw(":depth  "),
             Span::styled("Esc", bold),
             Span::raw(":close"),
         ]);

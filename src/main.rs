@@ -612,12 +612,12 @@ impl State {
                 true
             }
             BareKey::Left if only_shift => {
-                // Pan viewport left without moving cursor.
-                self.scroll_x = self.scroll_x.saturating_sub(1);
+                // Pan viewport left 5 cols; clamps at 0.
+                self.scroll_x = self.scroll_x.saturating_sub(5);
                 true
             }
             BareKey::Right if only_shift => {
-                // Pan viewport right without moving cursor.
+                // Pan viewport right 5 cols; clamps so line start stays visible.
                 let max_x = self
                     .lines
                     .iter()
@@ -625,7 +625,7 @@ impl State {
                     .max()
                     .unwrap_or(0)
                     .saturating_sub(self.avail_w().saturating_sub(1));
-                self.scroll_x = (self.scroll_x + 1).min(max_x);
+                self.scroll_x = (self.scroll_x + 5).min(max_x);
                 true
             }
             BareKey::Left => {

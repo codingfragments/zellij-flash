@@ -590,7 +590,7 @@ fn build_line_spans(
     sel: Option<(usize, usize)>,
     cursor_col: Option<usize>,
 ) -> Vec<Span<'static>> {
-    let sel_style    = Style::default().bg(Color::Blue).fg(Color::White);
+    let sel_style    = Style::default().bg(Color::LightBlue).fg(Color::Black);
     let cursor_style = Style::default().bg(Color::White).fg(Color::Black);
 
     let char_style = |i: usize| -> Style {

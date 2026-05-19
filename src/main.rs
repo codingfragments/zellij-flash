@@ -509,11 +509,11 @@ impl State {
             }
             // ── Word motions (work in and out of selection) ───────────────────
             BareKey::Char('w') if key.has_no_modifiers() => { self.motion_w(false); true }
-            BareKey::Char('W') if only_shift             => { self.motion_w(true);  true }
+            BareKey::Char('W') if key.has_no_modifiers() || only_shift => { self.motion_w(true); true }
             BareKey::Char('b') if key.has_no_modifiers() => { self.motion_b(false); true }
-            BareKey::Char('B') if only_shift             => { self.motion_b(true);  true }
+            BareKey::Char('B') if key.has_no_modifiers() || only_shift => { self.motion_b(true); true }
             BareKey::Char('e') if key.has_no_modifiers() => { self.motion_e(false); true }
-            BareKey::Char('E') if only_shift             => { self.motion_e(true);  true }
+            BareKey::Char('E') if key.has_no_modifiers() || only_shift => { self.motion_e(true); true }
             BareKey::Char('0') if key.has_no_modifiers() => { self.motion_line_start(); true }
             BareKey::Char('$') if key.has_no_modifiers() => { self.motion_line_end();   true }
             BareKey::Enter if only_shift => {

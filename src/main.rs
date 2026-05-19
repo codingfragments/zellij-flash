@@ -700,10 +700,12 @@ impl State {
                 let typed_len = if let Mode::Jump { ref typed, .. } = self.mode {
                     typed.chars().count()
                 } else { 0 };
+                // Label sits on the LAST char of the matched prefix so the
+                // earlier chars stay visible and confirm the match.
                 let line_labels: Vec<(usize, char)> = jump_labels
                     .iter()
                     .filter(|&&(l, _, _)| l == abs)
-                    .map(|&(_, col, lc)| (col, lc))
+                    .map(|&(_, col, lc)| (col + typed_len.saturating_sub(1), lc))
                     .collect();
 
                 let mut spans = vec![gutter];
@@ -942,8 +944,12 @@ fn build_line_spans(
             if let Some(&(_, lc)) = line_labels.iter().find(|&&(lc, _)| lc == i) {
                 return (lc, label_style);
             }
-            // Chars within the matched prefix (after the label col) get match highlight.
-            let in_match = line_labels.iter().any(|&(lc, _)| i > lc && i < lc + typed_len);
+            // Chars before the label within the matched prefix get match highlight.
+            // label_col is the last char of the match; match starts at label_col - (typed_len-1).
+            let in_match = typed_len > 1 && line_labels.iter().any(|&(label_col, _)| {
+                let match_start = label_col.saturating_sub(typed_len - 1);
+                i >= match_start && i < label_col
+            });
             if in_match {
                 return (ch, match_style);
             }

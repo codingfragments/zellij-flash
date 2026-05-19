@@ -94,6 +94,9 @@ enum Mode {
     /// Word-jump: user types a prefix, labels appear on visible matches.
     /// `labels` = (line, col, label_char), sorted by distance from cursor.
     Jump { typed: String, labels: Vec<(usize, usize, char)> },
+    /// Line-jump: every visible line gets a gutter label immediately.
+    /// `labels` = (line_idx, label_char), sorted by distance from cursor.
+    LineJump { labels: Vec<(usize, char)> },
     /// Waiting for `y`/Enter/Esc before inserting multi-line text.
     Confirm { text: String },
 }
@@ -409,6 +412,11 @@ impl State {
             return self.handle_key_jump(key, typed, labels);
         }
 
+        // Line-jump mode: label key jumps to that line.
+        if let Mode::LineJump { labels } = self.mode.clone() {
+            return self.handle_key_line_jump(key, labels);
+        }
+
         // Confirm mode: waiting for y/Esc before inserting multi-line text.
         if let Mode::Confirm { text } = self.mode.clone() {
             return match key.bare_key {
@@ -456,6 +464,11 @@ impl State {
             }
             BareKey::Char('s') if key.has_no_modifiers() => {
                 self.mode = Mode::Jump { typed: String::new(), labels: Vec::new() };
+                true
+            }
+            BareKey::Char('l') if key.has_no_modifiers() => {
+                let labels = self.compute_line_labels();
+                self.mode = Mode::LineJump { labels };
                 true
             }
             BareKey::Enter if only_shift => {
@@ -617,6 +630,47 @@ impl State {
         self.recenter_scroll();
     }
 
+    // ── Line-jump mode ────────────────────────────────────────────────────────
+
+    fn compute_line_labels(&self) -> Vec<(usize, char)> {
+        let vis_start = self.scroll_y;
+        let vis_end = (self.scroll_y + self.content_rows).min(self.lines.len());
+        let (cline, _) = self.cursor;
+
+        let mut lines: Vec<usize> = (vis_start..vis_end).collect();
+        // Sort by distance from cursor row.
+        lines.sort_by_key(|&l| (l as isize - cline as isize).unsigned_abs());
+
+        lines.into_iter()
+            .zip(LABEL_CHARS.iter().copied())
+            .map(|(line, label)| (line, label))
+            .collect()
+    }
+
+    fn handle_key_line_jump(&mut self, key: KeyWithModifier, labels: Vec<(usize, char)>) -> bool {
+        match key.bare_key {
+            BareKey::Esc => {
+                self.mode = Mode::Normal;
+                true
+            }
+            BareKey::Char(c) => {
+                if let Some(&(line, _)) = labels.iter().find(|&&(_, lc)| lc == c) {
+                    // Preserve col if it fits on the target line, else clamp to 0.
+                    let col = self.cursor.1.min(self.line_len(line));
+                    self.jump_to(line, col);
+                    self.mode = Mode::Normal;
+                } else {
+                    self.mode = Mode::Normal;
+                }
+                true
+            }
+            _ => {
+                self.mode = Mode::Normal;
+                true
+            }
+        }
+    }
+
     // ── Rendering ─────────────────────────────────────────────────────────────
 
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
@@ -670,6 +724,10 @@ impl State {
         let jump_labels: &[(usize, usize, char)] =
             if let Mode::Jump { ref labels, .. } = self.mode { labels } else { &[] };
 
+        // Line-jump labels: (line_idx, label_char) for gutter replacement.
+        let line_jump_labels: &[(usize, char)] =
+            if let Mode::LineJump { ref labels } = self.mode { labels } else { &[] };
+
         let gutter_dim = Style::default().fg(THEME_GUTTER_DIM).add_modifier(Modifier::DIM);
         let gutter_cursor_style = Style::default().fg(THEME_GUTTER_CURSOR).add_modifier(Modifier::BOLD);
 
@@ -681,16 +739,28 @@ impl State {
                 let is_cursor_line = abs == cursor_line;
                 let dist = (abs as isize - cursor_line as isize).unsigned_abs();
 
-                let gutter_str = format!(
-                    "{:>w$}{}",
-                    dist,
-                    if is_cursor_line { "► " } else { "  " },
-                    w = num_w
-                );
-                let gutter = Span::styled(
-                    gutter_str,
-                    if is_cursor_line { gutter_cursor_style } else { gutter_dim },
-                );
+                // In LineJump mode, replace the gutter number with the label.
+                let (gutter_str, gutter_style) =
+                    if let Some(&(_, lc)) = line_jump_labels.iter().find(|&&(l, _)| l == abs) {
+                        (
+                            format!("{:>w$}  ", lc, w = num_w),
+                            Style::default()
+                                .bg(THEME_JUMP_LABEL_BG)
+                                .fg(THEME_JUMP_LABEL_FG)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        (
+                            format!(
+                                "{:>w$}{}",
+                                dist,
+                                if is_cursor_line { "► " } else { "  " },
+                                w = num_w
+                            ),
+                            if is_cursor_line { gutter_cursor_style } else { gutter_dim },
+                        )
+                    };
+                let gutter = Span::styled(gutter_str, gutter_style);
 
                 let chars: Vec<char> = text.chars().take(avail_w).collect();
                 let sel_range = sel.and_then(|(s, e)| sel_range_for_line(s, e, abs, chars.len()));
@@ -747,7 +817,18 @@ impl State {
         }
         let line1 = Line::from(line1_spans);
 
-        let line2 = if let Mode::Jump { typed, labels } = &self.mode {
+        let line2 = if let Mode::LineJump { labels } = &self.mode {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    format!("line jump — {} lines labeled", labels.len()),
+                    Style::default().fg(THEME_JUMP_LABEL_BG).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled("Esc", bold),
+                Span::raw(":cancel"),
+            ])
+        } else if let Mode::Jump { typed, labels } = &self.mode {
             let hint = if labels.is_empty() && !typed.is_empty() {
                 format!("jump: {}  (no matches)", typed)
             } else if labels.is_empty() {
@@ -801,6 +882,10 @@ impl State {
                 Span::raw(":half-page  "),
                 Span::styled("Space", bold),
                 Span::raw(":select  "),
+                Span::styled("s", bold),
+                Span::raw(":jump  "),
+                Span::styled("l", bold),
+                Span::raw(":line  "),
                 Span::styled("g", bold),
                 Span::raw(":depth  "),
                 Span::styled("Enter", bold),

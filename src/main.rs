@@ -394,6 +394,10 @@ impl State {
                     self.do_insert(text);
                     false
                 }
+                BareKey::Enter => {
+                    self.do_insert(text);
+                    false
+                }
                 BareKey::Esc => {
                     self.mode = Mode::Normal;
                     true
@@ -465,7 +469,7 @@ impl State {
                 text: text.clone(),
             };
             self.message = Some(format!(
-                "Insert {} lines into pane?  y:confirm  Esc:cancel",
+                "Insert {} lines into pane?  y/Enter:confirm  Esc:cancel",
                 line_count
             ));
             true

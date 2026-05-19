@@ -119,8 +119,12 @@ struct State {
     anchor: Option<(usize, usize)>,
     /// Index of the first visible line in the content viewport.
     scroll_y: usize,
+    /// Horizontal viewport offset in char columns.
+    scroll_x: usize,
     /// Content area height — updated each render, used for half-page math.
     content_rows: usize,
+    /// Content area width — updated each render, used for horizontal scroll math.
+    content_cols: usize,
     /// Size string from keybind config ("90%x85%"), applied once on open.
     pending_size: Option<String>,
     mode: Mode,
@@ -143,7 +147,9 @@ impl Default for State {
             cursor: (0, 0),
             anchor: None,
             scroll_y: 0,
+            scroll_x: 0,
             content_rows: 24,
+            content_cols: 80,
             mode: Mode::Normal,
             message: None,
             pending_size: None,
@@ -239,6 +245,7 @@ impl ZellijPlugin for State {
         };
 
         self.content_rows = rows.saturating_sub(4).max(1);
+        self.content_cols = cols;
 
         let mut buf = match self.render_buffer.take() {
             Some(mut b) if b.area() == &area => {
@@ -343,6 +350,7 @@ impl State {
     fn move_left(&mut self) {
         if self.cursor.1 > 0 {
             self.cursor.1 -= 1;
+            self.scroll_x_into_view();
         } else if self.cursor.0 > 0 {
             self.cursor.0 -= 1;
             self.cursor.1 = self.line_len(self.cursor.0);
@@ -354,6 +362,7 @@ impl State {
         let len = self.line_len(self.cursor.0);
         if self.cursor.1 < len {
             self.cursor.1 += 1;
+            self.scroll_x_into_view();
         } else if self.cursor.0 + 1 < self.lines.len() {
             self.cursor.0 += 1;
             self.cursor.1 = 0;
@@ -382,10 +391,36 @@ impl State {
         } else if self.cursor.0 >= self.scroll_y + self.content_rows {
             self.scroll_y = self.cursor.0 + 1 - self.content_rows;
         }
+        self.scroll_x_into_view();
     }
 
     fn recenter_scroll(&mut self) {
         self.scroll_y = self.cursor.0.saturating_sub(self.content_rows / 2);
+        self.scroll_x_into_view();
+    }
+
+    /// Adjust scroll_x so the cursor column is visible.
+    fn scroll_x_into_view(&mut self) {
+        let avail = self.avail_w();
+        if avail == 0 { return; }
+        if self.cursor.1 < self.scroll_x {
+            self.scroll_x = self.cursor.1;
+        } else if self.cursor.1 + 1 >= self.scroll_x + avail {
+            // +1 accounts for the `…` indicator occupying the last display column
+            // when the line overflows — scroll before the cursor lands on it.
+            self.scroll_x = self.cursor.1 + 2 - avail;
+        }
+    }
+
+    /// Gutter width in chars: right-aligned line number + 2-char marker.
+    fn gutter_w(&self) -> usize {
+        let max_dist = self.content_rows.saturating_sub(1);
+        max_dist.to_string().len().max(1) + 2
+    }
+
+    /// Available content width after the gutter.
+    fn avail_w(&self) -> usize {
+        self.content_cols.saturating_sub(self.gutter_w())
     }
 
     // ── Profile cycling ───────────────────────────────────────────────────────
@@ -394,6 +429,7 @@ impl State {
         if self.profiles.len() <= 1 { return; }
         self.current_profile = (self.current_profile + 1) % self.profiles.len();
         self.anchor = None;
+        self.scroll_x = 0;
         self.extraction_done = false;
         self.try_grab();
     }
@@ -768,24 +804,49 @@ impl State {
                     };
                 let gutter = Span::styled(gutter_str, gutter_style);
 
-                let chars: Vec<char> = text.chars().take(avail_w).collect();
-                let sel_range = sel.and_then(|(s, e)| sel_range_for_line(s, e, abs, chars.len()));
-                let cur_col = if is_cursor_line { Some(cursor_col) } else { None };
+                let scroll_x = self.scroll_x;
+                let logical_len = text.chars().count();
+                let has_right_overflow = logical_len > scroll_x + avail_w;
+                let has_left_overflow = scroll_x > 0;
 
-                // Labels on this line: collect (col, label_char).
+                // Slice the line to the visible horizontal window.
+                // Reserve 1 char on the right for `…` when content overflows.
+                let visible_w = if has_right_overflow { avail_w.saturating_sub(1) } else { avail_w };
+                let chars: Vec<char> = text.chars().skip(scroll_x).take(visible_w).collect();
+
+                // Convert logical selection/cursor coords → display coords (relative to scroll_x).
+                let raw_sel = sel.and_then(|(s, e)| sel_range_for_line(s, e, abs, logical_len));
+                let sel_range = raw_sel.map(|(s, e)| (
+                    s.saturating_sub(scroll_x),
+                    e.saturating_sub(scroll_x),
+                ));
+                let cur_col = if is_cursor_line {
+                    Some(cursor_col.saturating_sub(scroll_x))
+                } else { None };
+
                 let typed_len = if let Mode::Jump { ref typed, .. } = self.mode {
                     typed.chars().count()
                 } else { 0 };
-                // Label sits on the LAST char of the matched prefix so the
-                // earlier chars stay visible and confirm the match.
+                // Label sits on the LAST char of the matched prefix (display coords).
                 let line_labels: Vec<(usize, char)> = jump_labels
                     .iter()
                     .filter(|&&(l, _, _)| l == abs)
-                    .map(|&(_, col, lc)| (col + typed_len.saturating_sub(1), lc))
+                    .filter_map(|&(_, col, lc)| {
+                        let disp = (col + typed_len.saturating_sub(1)).saturating_sub(scroll_x);
+                        if disp < visible_w { Some((disp, lc)) } else { None }
+                    })
                     .collect();
 
                 let mut spans = vec![gutter];
+                // Left-overflow indicator.
+                if has_left_overflow {
+                    spans.push(Span::styled("…", Style::default().fg(THEME_FOOTER_DIM)));
+                }
                 spans.extend(build_line_spans(&chars, sel_range, cur_col, &line_labels, typed_len));
+                // Right-overflow indicator.
+                if has_right_overflow {
+                    spans.push(Span::styled("…", Style::default().fg(THEME_FOOTER_DIM)));
+                }
                 Line::from(spans)
             })
             .collect();
@@ -804,15 +865,20 @@ impl State {
             .unwrap_or_else(|| "?".to_string());
 
         let (cline, ccol) = self.cursor;
+        let pos_str = if self.scroll_x > 0 {
+            format!("{}:{}  +{}", cline + 1, ccol + 1, self.scroll_x)
+        } else {
+            format!("{}:{}", cline + 1, ccol + 1)
+        };
 
-        // Status line: profile, line count, cursor pos, selection info.
+        // Status line: profile, line count, cursor pos, h-scroll offset, selection info.
         let mut line1_spans = vec![
             Span::raw(" "),
             Span::styled(format!("[{}]", profile_label), dim),
             Span::raw("  "),
             Span::styled(format!("{} lines", self.lines.len()), dim),
             Span::raw("  "),
-            Span::styled(format!("{}:{}", cline + 1, ccol + 1), dim),
+            Span::styled(pos_str, dim),
         ];
         if let Some((nlines, nchars)) = self.selection_info() {
             line1_spans.push(Span::raw("  "));

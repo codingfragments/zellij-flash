@@ -23,19 +23,23 @@ const C_TEAL:     Color = Color::Rgb(139, 213, 202); // #8bd5ca — SEL indicato
 const C_SUBTEXT1: Color = Color::Rgb(184, 192, 224); // #b8c0e0 — footer hints / bold keys
 const C_PEACH:    Color = Color::Rgb(245, 169, 127); // #f5a97f — jump label bg
 const C_RED:      Color = Color::Rgb(237, 135, 150); // #ed8796 — jump match highlight
+const C_GREEN:    Color = Color::Rgb(166, 218, 149); // #a6da95 — search match bg
 
 // Semantic roles → palette entries (single place to remap when config lands).
-const THEME_SEL_BG:          Color = C_BLUE;
-const THEME_SEL_FG:          Color = C_BASE;
-const THEME_CURSOR_BG:       Color = C_TEXT;
-const THEME_CURSOR_FG:       Color = C_BASE;
-const THEME_GUTTER_CURSOR:   Color = C_YELLOW;
-const THEME_GUTTER_DIM:      Color = C_OVERLAY0;
-const THEME_SEL_INDICATOR:   Color = C_TEAL;
-const THEME_FOOTER_DIM:      Color = C_OVERLAY0;
-const THEME_FOOTER_KEY:      Color = C_SUBTEXT1;
-const THEME_JUMP_LABEL_BG:   Color = C_PEACH;
-const THEME_JUMP_LABEL_FG:   Color = C_BASE;
+const THEME_SEL_BG:              Color = C_BLUE;
+const THEME_SEL_FG:              Color = C_BASE;
+const THEME_CURSOR_BG:           Color = C_TEXT;
+const THEME_CURSOR_FG:           Color = C_BASE;
+const THEME_GUTTER_CURSOR:       Color = C_YELLOW;
+const THEME_GUTTER_DIM:          Color = C_OVERLAY0;
+const THEME_SEL_INDICATOR:       Color = C_TEAL;
+const THEME_FOOTER_DIM:          Color = C_OVERLAY0;
+const THEME_FOOTER_KEY:          Color = C_SUBTEXT1;
+const THEME_JUMP_LABEL_BG:       Color = C_PEACH;
+const THEME_JUMP_LABEL_FG:       Color = C_BASE;
+const THEME_SEARCH_MATCH_BG:     Color = C_GREEN;
+const THEME_SEARCH_CURRENT_BG:   Color = C_YELLOW;
+const THEME_SEARCH_FG:           Color = C_BASE;
 const THEME_JUMP_MATCH_FG:   Color = C_RED;
 
 // ── Profile ───────────────────────────────────────────────────────────────────
@@ -99,6 +103,11 @@ enum Mode {
     LineJump { labels: Vec<(usize, char)> },
     /// Waiting for `y`/Enter/Esc before inserting multi-line text.
     Confirm { text: String },
+    /// Incremental search. Only active outside selection mode.
+    /// `matches` = (line, col) of each match start, sorted.
+    /// `current` = index of the highlighted / cursor-targeted match.
+    /// `navigating` = false while typing the query, true after Enter confirms it.
+    Search { query: String, matches: Vec<(usize, usize)>, current: usize, navigating: bool },
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -448,6 +457,11 @@ impl State {
             return self.handle_key_jump(key, typed, labels);
         }
 
+        // Search mode.
+        if let Mode::Search { query, matches, current, navigating } = self.mode.clone() {
+            return self.handle_key_search(key, query, matches, current, navigating);
+        }
+
         // Line-jump mode: label key jumps to that line.
         if let Mode::LineJump { labels } = self.mode.clone() {
             return self.handle_key_line_jump(key, labels);
@@ -516,6 +530,16 @@ impl State {
             BareKey::Char('E') if key.has_no_modifiers() || only_shift => { self.motion_e(true); true }
             BareKey::Char('0') if key.has_no_modifiers() => { self.motion_line_start(); true }
             BareKey::Char('$') if key.has_no_modifiers() => { self.motion_line_end();   true }
+            // `/` search — only outside selection mode.
+            BareKey::Char('/') if key.has_no_modifiers() && self.anchor.is_none() => {
+                self.mode = Mode::Search {
+                    query: String::new(),
+                    matches: Vec::new(),
+                    current: 0,
+                    navigating: false,
+                };
+                true
+            }
             BareKey::Enter if only_shift => {
                 self.action_insert();
                 true
@@ -798,6 +822,121 @@ impl State {
         self.scroll_x_into_view();
     }
 
+    // ── Search mode ───────────────────────────────────────────────────────────
+
+    fn compute_search_matches(&self, query: &str) -> Vec<(usize, usize)> {
+        if query.is_empty() { return Vec::new(); }
+        let q: Vec<char> = query.to_lowercase().chars().collect();
+        let qlen = q.len();
+        let mut out = Vec::new();
+        for (li, line) in self.lines.iter().enumerate() {
+            let lc: Vec<char> = line.to_lowercase().chars().collect();
+            if lc.len() < qlen { continue; }
+            for col in 0..=(lc.len() - qlen) {
+                if lc[col..col + qlen] == q[..] {
+                    out.push((li, col));
+                }
+            }
+        }
+        out
+    }
+
+    /// Index of first match at or after cursor, wrapping to 0.
+    fn search_current_from_cursor(&self, matches: &[(usize, usize)]) -> usize {
+        let (cl, cc) = self.cursor;
+        matches.iter().position(|&(ml, mc)| ml > cl || (ml == cl && mc >= cc))
+            .unwrap_or(0)
+    }
+
+    fn handle_key_search(
+        &mut self,
+        key: KeyWithModifier,
+        mut query: String,
+        mut matches: Vec<(usize, usize)>,
+        mut current: usize,
+        navigating: bool,
+    ) -> bool {
+        let only_shift = key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1;
+
+        if navigating {
+            // Navigation phase: n/N move between matches, anything else exits.
+            match key.bare_key {
+                BareKey::Esc => {
+                    self.mode = Mode::Normal;
+                    true
+                }
+                BareKey::Char(' ') if key.has_no_modifiers() => {
+                    // Exit search and anchor selection at current match start.
+                    self.anchor = Some(self.cursor);
+                    self.mode = Mode::Normal;
+                    true
+                }
+                BareKey::Char('n') if key.has_no_modifiers() => {
+                    if !matches.is_empty() {
+                        current = (current + 1) % matches.len();
+                        self.jump_search_cursor(&matches, current);
+                    }
+                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    true
+                }
+                BareKey::Char('N') if key.has_no_modifiers() || only_shift => {
+                    if !matches.is_empty() {
+                        current = (current + matches.len() - 1) % matches.len();
+                        self.jump_search_cursor(&matches, current);
+                    }
+                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    true
+                }
+                _ => {
+                    // Any other key exits search, stays at current match.
+                    self.mode = Mode::Normal;
+                    true
+                }
+            }
+        } else {
+            // Input phase: type freely; Enter confirms, Esc cancels.
+            match key.bare_key {
+                BareKey::Esc => {
+                    self.mode = Mode::Normal;
+                    true
+                }
+                BareKey::Enter => {
+                    // Commit query — switch to navigation phase.
+                    current = self.search_current_from_cursor(&matches);
+                    self.jump_search_cursor(&matches, current);
+                    self.mode = Mode::Search { query, matches, current, navigating: true };
+                    true
+                }
+                BareKey::Backspace => {
+                    query.pop();
+                    matches = self.compute_search_matches(&query);
+                    current = self.search_current_from_cursor(&matches);
+                    self.jump_search_cursor(&matches, current);
+                    self.mode = Mode::Search { query, matches, current, navigating: false };
+                    true
+                }
+                BareKey::Char(c) if !c.is_control()
+                    && (key.has_no_modifiers() || only_shift) =>
+                {
+                    query.push(c);
+                    matches = self.compute_search_matches(&query);
+                    current = self.search_current_from_cursor(&matches);
+                    self.jump_search_cursor(&matches, current);
+                    self.mode = Mode::Search { query, matches, current, navigating: false };
+                    true
+                }
+                _ => true,
+            }
+        }
+    }
+
+    fn jump_search_cursor(&mut self, matches: &[(usize, usize)], current: usize) {
+        if let Some(&(line, col)) = matches.get(current) {
+            self.cursor = (line, col);
+            self.recenter_scroll();
+        }
+    }
+
     // ── Line-jump mode ────────────────────────────────────────────────────────
 
     fn compute_line_labels(&self) -> Vec<(usize, char)> {
@@ -902,6 +1041,14 @@ impl State {
         let line_jump_labels: &[(usize, char)] =
             if let Mode::LineJump { ref labels } = self.mode { labels } else { &[] };
 
+        // Search highlights: collect (line, col, is_current) from Search mode.
+        let (search_all, search_current_idx, search_qlen) =
+            if let Mode::Search { ref matches, current, ref query, .. } = self.mode {
+                (matches.as_slice(), current, query.chars().count())
+            } else {
+                (&[][..], 0, 0)
+            };
+
         let gutter_dim = Style::default().fg(THEME_GUTTER_DIM).add_modifier(Modifier::DIM);
         let gutter_cursor_style = Style::default().fg(THEME_GUTTER_CURSOR).add_modifier(Modifier::BOLD);
 
@@ -969,13 +1116,25 @@ impl State {
                     })
                     .collect();
 
+                // Search matches on this line in display coords (col, is_current).
+                let line_search: Vec<(usize, bool)> = search_all
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &(ml, _))| ml == abs)
+                    .filter_map(|(i, &(_, mc))| {
+                        let dc = mc.saturating_sub(scroll_x);
+                        if dc < visible_w { Some((dc, i == search_current_idx)) } else { None }
+                    })
+                    .collect();
+
                 let mut spans = vec![gutter];
-                // Left-overflow indicator.
                 if has_left_overflow {
                     spans.push(Span::styled("…", Style::default().fg(THEME_FOOTER_DIM)));
                 }
-                spans.extend(build_line_spans(&chars, sel_range, cur_col, &line_labels, typed_len));
-                // Right-overflow indicator.
+                spans.extend(build_line_spans(
+                    &chars, sel_range, cur_col, &line_labels, typed_len,
+                    &line_search, search_qlen,
+                ));
                 if has_right_overflow {
                     spans.push(Span::styled("…", Style::default().fg(THEME_FOOTER_DIM)));
                 }
@@ -1021,7 +1180,40 @@ impl State {
         }
         let line1 = Line::from(line1_spans);
 
-        let line2 = if let Mode::LineJump { labels } = &self.mode {
+        let line2 = if let Mode::Search { query, matches, current, navigating } = &self.mode {
+            let count_str = if matches.is_empty() && !query.is_empty() {
+                "  (no matches)".to_string()
+            } else if !matches.is_empty() {
+                format!("  {}/{}", current + 1, matches.len())
+            } else {
+                String::new()
+            };
+            if *navigating {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("/{query}{count_str}"),
+                        Style::default().fg(THEME_SEARCH_CURRENT_BG).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled("n", bold), Span::raw(":next  "),
+                    Span::styled("N", bold), Span::raw(":prev  "),
+                    Span::styled("Space", bold), Span::raw(":select  "),
+                    Span::styled("Esc", bold), Span::raw(":done"),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("/{query}█{count_str}"),
+                        Style::default().fg(THEME_SEARCH_CURRENT_BG).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled("Enter", bold), Span::raw(":confirm  "),
+                    Span::styled("Esc", bold), Span::raw(":cancel"),
+                ])
+            }
+        } else if let Mode::LineJump { labels } = &self.mode {
             Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
@@ -1082,6 +1274,8 @@ impl State {
                 Span::raw(" "),
                 Span::styled("wWeEbB0$", bold),
                 Span::raw(":word  "),
+                Span::styled("/", bold),
+                Span::raw(":search  "),
                 Span::styled("s", bold),
                 Span::raw(":jump  "),
                 Span::styled("l", bold),
@@ -1215,40 +1409,45 @@ fn build_line_spans(
     cursor_col: Option<usize>,
     line_labels: &[(usize, char)],
     typed_len: usize,
+    search_matches: &[(usize, bool)], // (display_col, is_current)
+    search_len: usize,
 ) -> Vec<Span<'static>> {
-    let sel_style    = Style::default().bg(THEME_SEL_BG).fg(THEME_SEL_FG);
-    let cursor_style = Style::default().bg(THEME_CURSOR_BG).fg(THEME_CURSOR_FG);
-    let label_style  = Style::default().bg(THEME_JUMP_LABEL_BG).fg(THEME_JUMP_LABEL_FG)
-                           .add_modifier(Modifier::BOLD);
-    let match_style  = Style::default().fg(THEME_JUMP_MATCH_FG).add_modifier(Modifier::BOLD);
+    let sel_style           = Style::default().bg(THEME_SEL_BG).fg(THEME_SEL_FG);
+    let cursor_style        = Style::default().bg(THEME_CURSOR_BG).fg(THEME_CURSOR_FG);
+    let label_style         = Style::default().bg(THEME_JUMP_LABEL_BG).fg(THEME_JUMP_LABEL_FG)
+                                  .add_modifier(Modifier::BOLD);
+    let match_style         = Style::default().fg(THEME_JUMP_MATCH_FG).add_modifier(Modifier::BOLD);
+    let search_style        = Style::default().bg(THEME_SEARCH_MATCH_BG).fg(THEME_SEARCH_FG);
+    let search_cur_style    = Style::default().bg(THEME_SEARCH_CURRENT_BG).fg(THEME_SEARCH_FG)
+                                  .add_modifier(Modifier::BOLD);
 
-    // Build a per-character decision: (display_char, style).
     let mut cells: Vec<(char, Style)> = chars
         .iter()
         .enumerate()
         .map(|(i, &ch)| {
-            // Label takes priority.
+            // 1. Jump label (highest).
             if let Some(&(_, lc)) = line_labels.iter().find(|&&(lc, _)| lc == i) {
                 return (lc, label_style);
             }
-            // Chars before the label within the matched prefix get match highlight.
-            // label_col is the last char of the match; match starts at label_col - (typed_len-1).
-            let in_match = typed_len > 1 && line_labels.iter().any(|&(label_col, _)| {
-                let match_start = label_col.saturating_sub(typed_len - 1);
-                i >= match_start && i < label_col
+            // 2. Jump prefix match chars.
+            let in_jump_match = typed_len > 1 && line_labels.iter().any(|&(label_col, _)| {
+                let start = label_col.saturating_sub(typed_len - 1);
+                i >= start && i < label_col
             });
-            if in_match {
-                return (ch, match_style);
-            }
-            // Cursor.
-            if cursor_col == Some(i) {
-                return (ch, cursor_style);
-            }
-            // Selection.
-            if let Some((s, e)) = sel {
-                if i >= s && i <= e {
-                    return (ch, sel_style);
+            if in_jump_match { return (ch, match_style); }
+            // 3. Cursor.
+            if cursor_col == Some(i) { return (ch, cursor_style); }
+            // 4. Current search match.
+            if search_len > 0 {
+                for &(mc, is_cur) in search_matches {
+                    if i >= mc && i < mc + search_len {
+                        return (ch, if is_cur { search_cur_style } else { search_style });
+                    }
                 }
+            }
+            // 5. Selection.
+            if let Some((s, e)) = sel {
+                if i >= s && i <= e { return (ch, sel_style); }
             }
             (ch, Style::default())
         })

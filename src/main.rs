@@ -618,7 +618,9 @@ impl State {
             }
             BareKey::Right if only_shift => {
                 // Pan viewport right without moving cursor.
-                let max_x = self.lines.iter()
+                let max_x = self
+                    .lines
+                    .iter()
                     .map(|l| l.chars().count())
                     .max()
                     .unwrap_or(0)
@@ -849,7 +851,8 @@ impl State {
             .chars()
             .flat_map(|c| [c.to_ascii_lowercase(), c.to_ascii_uppercase()])
             .collect();
-        let pool: Vec<char> = self.jump_labels
+        let pool: Vec<char> = self
+            .jump_labels
             .iter()
             .filter(|&&c| !exclude.contains(&c))
             .copied()

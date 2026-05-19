@@ -507,6 +507,15 @@ impl State {
                 self.mode = Mode::LineJump { labels };
                 true
             }
+            // ── Word motions (work in and out of selection) ───────────────────
+            BareKey::Char('w') if key.has_no_modifiers() => { self.motion_w(false); true }
+            BareKey::Char('W') if only_shift             => { self.motion_w(true);  true }
+            BareKey::Char('b') if key.has_no_modifiers() => { self.motion_b(false); true }
+            BareKey::Char('B') if only_shift             => { self.motion_b(true);  true }
+            BareKey::Char('e') if key.has_no_modifiers() => { self.motion_e(false); true }
+            BareKey::Char('E') if only_shift             => { self.motion_e(true);  true }
+            BareKey::Char('0') if key.has_no_modifiers() => { self.motion_line_start(); true }
+            BareKey::Char('$') if key.has_no_modifiers() => { self.motion_line_end();   true }
             BareKey::Enter if only_shift => {
                 self.action_insert();
                 true
@@ -664,6 +673,129 @@ impl State {
     fn jump_to(&mut self, line: usize, col: usize) {
         self.cursor = (line, col);
         self.recenter_scroll();
+    }
+
+    // ── Word motions ──────────────────────────────────────────────────────────
+
+    fn char_at(&self, line: usize, col: usize) -> Option<char> {
+        self.lines.get(line)?.chars().nth(col)
+    }
+
+    /// Advance one step in stream order, wrapping at line ends.
+    fn next_pos(&self, line: usize, col: usize) -> Option<(usize, usize)> {
+        if col < self.line_len(line) {
+            Some((line, col + 1))
+        } else if line + 1 < self.lines.len() {
+            Some((line + 1, 0))
+        } else {
+            None
+        }
+    }
+
+    /// Retreat one step in stream order, wrapping at line starts.
+    fn prev_pos(&self, line: usize, col: usize) -> Option<(usize, usize)> {
+        if col > 0 {
+            Some((line, col - 1))
+        } else if line > 0 {
+            Some((line - 1, self.line_len(line - 1)))
+        } else {
+            None
+        }
+    }
+
+    /// Character class at a position. EOL (col == line_len) counts as Space.
+    /// `wide = true` → WORD mode: only Space vs NonSpace.
+    /// `wide = false` → word mode: Space | Word | Other.
+    fn cclass(&self, line: usize, col: usize, wide: bool) -> u8 {
+        match self.char_at(line, col) {
+            None => 0, // EOL = space
+            Some(c) if c.is_whitespace() => 0,
+            Some(_) if wide => 1,
+            Some(c) if c.is_alphanumeric() || c == '_' => 1,
+            Some(_) => 2,
+        }
+    }
+
+    /// `w` / `W` — forward to start of next word.
+    fn motion_w(&mut self, wide: bool) {
+        let (mut line, mut col) = self.cursor;
+        let start = self.cclass(line, col, wide);
+        // Skip current class run.
+        loop {
+            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            (line, col) = (nl, nc);
+            if self.cclass(line, col, wide) != start { break; }
+        }
+        // Skip spaces.
+        while self.cclass(line, col, wide) == 0 {
+            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            (line, col) = (nl, nc);
+        }
+        self.cursor = (line, col);
+        self.scroll_cursor_into_view();
+    }
+
+    /// `b` / `B` — backward to start of previous word.
+    fn motion_b(&mut self, wide: bool) {
+        let (mut line, mut col) = self.cursor;
+        // Retreat one step first.
+        let Some((nl, nc)) = self.prev_pos(line, col) else { return };
+        (line, col) = (nl, nc);
+        // Skip spaces backward.
+        while self.cclass(line, col, wide) == 0 {
+            let Some((nl, nc)) = self.prev_pos(line, col) else { break };
+            (line, col) = (nl, nc);
+        }
+        // Skip same-class run backward to find its start.
+        let target = self.cclass(line, col, wide);
+        loop {
+            let Some((nl, nc)) = self.prev_pos(line, col) else { break };
+            if self.cclass(nl, nc, wide) == target {
+                (line, col) = (nl, nc);
+            } else {
+                break;
+            }
+        }
+        self.cursor = (line, col);
+        self.scroll_cursor_into_view();
+    }
+
+    /// `e` / `E` — forward to end of current / next word.
+    fn motion_e(&mut self, wide: bool) {
+        let (mut line, mut col) = self.cursor;
+        // Advance one step first.
+        let Some((nl, nc)) = self.next_pos(line, col) else { return };
+        (line, col) = (nl, nc);
+        // Skip spaces.
+        while self.cclass(line, col, wide) == 0 {
+            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            (line, col) = (nl, nc);
+        }
+        // Advance through current class run until class changes.
+        let target = self.cclass(line, col, wide);
+        loop {
+            let Some((nl, nc)) = self.next_pos(line, col) else { break };
+            if self.cclass(nl, nc, wide) == target {
+                (line, col) = (nl, nc);
+            } else {
+                break;
+            }
+        }
+        self.cursor = (line, col);
+        self.scroll_cursor_into_view();
+    }
+
+    /// `0` — start of line.
+    fn motion_line_start(&mut self) {
+        self.cursor.1 = 0;
+        self.scroll_x_into_view();
+    }
+
+    /// `$` — end of line (last char, not past it).
+    fn motion_line_end(&mut self) {
+        let len = self.line_len(self.cursor.0);
+        self.cursor.1 = len.saturating_sub(1);
+        self.scroll_x_into_view();
     }
 
     // ── Line-jump mode ────────────────────────────────────────────────────────
@@ -948,16 +1080,14 @@ impl State {
         } else {
             let mut spans = vec![
                 Span::raw(" "),
-                Span::styled("↑↓←→", bold),
-                Span::raw(":move  "),
-                Span::styled("PgUp/Dn", bold),
-                Span::raw(":half-page  "),
-                Span::styled("Space", bold),
-                Span::raw(":select  "),
+                Span::styled("wWeEbB0$", bold),
+                Span::raw(":word  "),
                 Span::styled("s", bold),
                 Span::raw(":jump  "),
                 Span::styled("l", bold),
                 Span::raw(":line  "),
+                Span::styled("Space", bold),
+                Span::raw(":select  "),
                 Span::styled("g", bold),
                 Span::raw(":depth  "),
                 Span::styled("Enter", bold),

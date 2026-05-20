@@ -134,10 +134,13 @@ const LABEL_CHARS: &[char] = &[
 enum Mode {
     Normal,
     /// Word-jump: user types a prefix, labels appear on visible matches.
-    /// `labels` = (line, col, label_char), sorted by distance from cursor.
+    /// `labels` = (line, jump_col, label_col, label_char), sorted by distance
+    /// from cursor. `jump_col` is the match start; `label_col` is where the
+    /// label glyph is rendered (last char of the prefix, clamped to the last
+    /// real character so EOL matches don't render past the line end).
     Jump {
         typed: String,
-        labels: Vec<(usize, usize, char)>,
+        labels: Vec<(usize, usize, usize, char)>,
     },
     /// Line-jump: every visible line gets a gutter label immediately.
     /// `labels` = (line_idx, label_char), sorted by distance from cursor.
@@ -798,7 +801,7 @@ impl State {
         &mut self,
         key: KeyWithModifier,
         mut typed: String,
-        labels: Vec<(usize, usize, char)>,
+        labels: Vec<(usize, usize, usize, char)>,
     ) -> bool {
         match key.bare_key {
             BareKey::Esc => {
@@ -814,8 +817,10 @@ impl State {
             BareKey::Char(c) => {
                 // If labels are showing and c matches a label → jump.
                 if !labels.is_empty() {
-                    if let Some(&(line, col, _)) = labels.iter().find(|&&(_, _, lc)| lc == c) {
-                        self.jump_to(line, col);
+                    if let Some(&(line, jump_col, _, _)) =
+                        labels.iter().find(|&&(_, _, _, lc)| lc == c)
+                    {
+                        self.jump_to(line, jump_col);
                         self.mode = Mode::Normal;
                         return true;
                     }
@@ -837,39 +842,54 @@ impl State {
         true
     }
 
-    fn compute_jump_labels(&self, typed: &str) -> Vec<(usize, usize, char)> {
+    fn compute_jump_labels(&self, typed: &str) -> Vec<(usize, usize, usize, char)> {
         if typed.is_empty() {
             return Vec::new();
         }
 
         let typed_lower: Vec<char> = typed.to_lowercase().chars().collect();
         let tlen = typed_lower.len();
+        // How many trailing spaces the user typed. Each line gets that many
+        // virtual spaces appended so "x " also matches "x" at the line end.
+        let trailing_spaces = typed_lower.iter().rev().take_while(|&&c| c == ' ').count();
 
-        // Search visible lines only.
         let vis_start = self.scroll_y;
         let vis_end = (self.scroll_y + self.content_rows).min(self.lines.len());
 
-        let mut matches: Vec<(usize, usize)> = Vec::new();
+        let mut raw: Vec<(usize, usize, usize)> = Vec::new(); // (line, jump_col, label_col)
         for line_idx in vis_start..vis_end {
-            let chars_lower: Vec<char> = self.lines[line_idx].to_lowercase().chars().collect();
+            let mut chars_lower: Vec<char> = self.lines[line_idx].to_lowercase().chars().collect();
+            let orig_n = chars_lower.len();
+            // Append virtual spaces so trailing-space patterns reach EOL.
+            if orig_n > 0 {
+                chars_lower.extend(std::iter::repeat_n(' ', trailing_spaces));
+            }
             let n = chars_lower.len();
             if tlen > n {
                 continue;
             }
             for col in 0..=(n - tlen) {
                 if chars_lower[col..col + tlen] == typed_lower[..] {
-                    matches.push((line_idx, col));
+                    // Label sits on the last char of the prefix, clamped to
+                    // the last real character (never on a virtual space).
+                    let label_col = (col + tlen - 1).min(orig_n.saturating_sub(1));
+                    raw.push((line_idx, col, label_col));
                 }
             }
         }
 
-        if matches.is_empty() || matches.len() > self.jump_labels.len() {
+        // Dedup: a line ending with a real space could produce the same
+        // (line, jump_col, label_col) from both the natural and virtual match.
+        raw.sort_unstable();
+        raw.dedup();
+
+        if raw.is_empty() || raw.len() > self.jump_labels.len() {
             return Vec::new();
         }
 
         // Sort by distance from cursor (line distance weighted heavier).
         let (cline, ccol) = self.cursor;
-        matches.sort_by_key(|&(line, col)| {
+        raw.sort_by_key(|&(line, col, _)| {
             let dl = (line as isize - cline as isize).unsigned_abs();
             let dc = (col as isize - ccol as isize).unsigned_abs();
             dl * 10_000 + dc
@@ -887,10 +907,9 @@ impl State {
             .copied()
             .collect();
 
-        matches
-            .into_iter()
+        raw.into_iter()
             .zip(pool)
-            .map(|((line, col), label)| (line, col, label))
+            .map(|((line, jump_col, label_col), label)| (line, jump_col, label_col, label))
             .collect()
     }
 
@@ -1294,12 +1313,12 @@ impl State {
         let sel = self.selection_range();
 
         // Collect jump labels for this frame (empty when not in Jump mode).
-        let jump_labels: &[(usize, usize, char)] = if let Mode::Jump { ref labels, .. } = self.mode
-        {
-            labels
-        } else {
-            &[]
-        };
+        let jump_labels: &[(usize, usize, usize, char)] =
+            if let Mode::Jump { ref labels, .. } = self.mode {
+                labels
+            } else {
+                &[]
+            };
 
         // Line-jump labels: (line_idx, label_char) for gutter replacement.
         let line_jump_labels: &[(usize, char)] = if let Mode::LineJump { ref labels } = self.mode {
@@ -1392,12 +1411,13 @@ impl State {
                 } else {
                     0
                 };
-                // Label sits on the LAST char of the matched prefix (display coords).
+                // Label sits on label_col (last real char of prefix, pre-computed
+                // in compute_jump_labels so EOL matches don't render past line end).
                 let line_labels: Vec<(usize, char)> = jump_labels
                     .iter()
-                    .filter(|&&(l, _, _)| l == abs)
-                    .filter_map(|&(_, col, lc)| {
-                        let disp = (col + typed_len.saturating_sub(1)).saturating_sub(scroll_x);
+                    .filter(|&&(l, _, _, _)| l == abs)
+                    .filter_map(|&(_, _, label_col, lc)| {
+                        let disp = label_col.saturating_sub(scroll_x);
                         if disp < visible_w {
                             Some((disp, lc))
                         } else {

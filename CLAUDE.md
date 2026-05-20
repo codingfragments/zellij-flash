@@ -7,6 +7,7 @@
   - `bug/` — bug fixes
   - `feature/` — new features
   - `phase/` — larger milestone / multi-commit work
+  - `release/<version>` — release prep (version bump + CHANGELOG)
 - If the type is unclear, ask before creating the branch.
 - Every branch lands via PR to `main` — no direct commits to `main`.
 - Stay on the working branch until the PR is explicitly merged; switch back to `main` only after merge.
@@ -22,7 +23,7 @@
 Releases are always a **two-step merge flow** — never tag directly from a feature/bug branch:
 
 1. **Code PRs** (`bug/`, `feature/`, `phase/`) — contain only the code changes; merge these first.
-2. **Release PR** (`bug/release-x.y.z` or `feature/release-x.y.z`) — a separate branch and PR that contains:
+2. **Release PR** (`release/<x.y.z>`) — a separate branch and PR that contains:
    - `Cargo.toml` version bump (semver: patch for bugs, minor for features, major for breaking)
    - `CHANGELOG.md` entry summarising what changed
    - Any other release-specific housekeeping

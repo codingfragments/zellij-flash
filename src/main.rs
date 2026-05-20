@@ -308,7 +308,15 @@ impl ZellijPlugin for State {
             }
             Event::TabUpdate(tabs) => {
                 if let Some(active) = tabs.iter().find(|t| t.active) {
+                    let was_unknown = self.active_tab_index.is_none();
                     self.active_tab_index = Some(active.position);
+                    // If a PaneUpdate arrived before this first TabUpdate,
+                    // source_pane was picked from all tabs (no filter) and
+                    // may be on the wrong tab. Reset it so the next PaneUpdate
+                    // re-picks with the correct per-tab filter.
+                    if was_unknown {
+                        self.source_pane = None;
+                    }
                 }
                 false
             }
@@ -397,6 +405,12 @@ impl State {
 
     fn try_grab(&mut self) {
         if self.extraction_done {
+            return;
+        }
+        // Don't grab before the first TabUpdate — without active_tab_index,
+        // source_pane::pick() searches all tabs and the HashMap iteration
+        // order determines which tab's pane wins (non-deterministic).
+        if self.active_tab_index.is_none() {
             return;
         }
         let Some(source) = self.source_pane else {

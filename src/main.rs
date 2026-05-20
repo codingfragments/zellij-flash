@@ -365,6 +365,11 @@ impl ZellijPlugin for State {
 
         self.content_rows = rows.saturating_sub(4).max(1);
         self.content_cols = cols;
+        // Clamp scroll_y now that we have the real viewport height. Prevents
+        // empty space below the last line when content_rows was wrong at grab
+        // time (default 24 vs actual size) or after a window resize.
+        let max_scroll = self.lines.len().saturating_sub(self.content_rows);
+        self.scroll_y = self.scroll_y.min(max_scroll);
 
         let mut buf = match self.render_buffer.take() {
             Some(mut b) if b.area() == &area => {
@@ -523,7 +528,9 @@ impl State {
     }
 
     fn recenter_scroll(&mut self) {
-        self.scroll_y = self.cursor.0.saturating_sub(self.content_rows / 2);
+        let ideal = self.cursor.0.saturating_sub(self.content_rows / 2);
+        let max_scroll = self.lines.len().saturating_sub(self.content_rows);
+        self.scroll_y = ideal.min(max_scroll);
         self.scroll_x_into_view();
     }
 

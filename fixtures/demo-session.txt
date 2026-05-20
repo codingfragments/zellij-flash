@@ -1,0 +1,96 @@
+❯ cat README.md
+
+# Synthwave CLI — Retro-flavoured cloud tooling
+
+A lightweight CLI for provisioning Synthwave Cloud environments.
+Full documentation: https://docs.synthwave.io/cli/getting-started
+Source:            https://github.com/synthwave-io/swcli
+Changelog:         https://github.com/synthwave-io/swcli/blob/main/CHANGELOG.md
+Issues:            https://github.com/synthwave-io/swcli/issues
+
+## Quick install
+
+    curl -fsSL https://releases.synthwave.io/install.sh | bash
+
+Or via Homebrew:
+
+    brew install synthwave-io/tap/swcli
+
+Verify the binary checksum after download:
+
+    SHA256  a3f8c2e1d09b74f65a21cc8e4d0b93f7282a1cd6e5f84017b3a9e2f6c0d81475
+    FILE    swcli-v2.4.1-darwin-arm64.tar.gz
+
+## First-time setup
+
+1. Authenticate with your workspace:
+
+       swcli auth login --workspace acme-corp
+
+   This opens https://auth.synthwave.io/device and prints a one-time code.
+   Paste it in the browser to complete the flow.
+
+2. Export your API token (generated at https://app.synthwave.io/settings/tokens):
+
+       export SYNTHWAVE_TOKEN=swt_prod_4Xk9mNpL2qRvTyUwJhBzCdEfGiAoSn8x
+
+3. Initialise your first environment:
+
+       swcli env init --name staging --region eu-west-1 \
+           --template https://github.com/synthwave-io/templates/blob/main/node-api.yaml
+
+4. Deploy:
+
+       swcli deploy --env staging --ref main
+
+## Configuration reference
+
+Default config path: ~/.config/swcli/config.yaml
+Schema docs:        https://docs.synthwave.io/cli/config-schema
+
+❯ swcli auth login --workspace acme-corp
+
+Opening https://auth.synthwave.io/device ...
+Your one-time code: XKPQ-7742
+
+Waiting for browser confirmation...
+✓ Authenticated as stefan@acme-corp.io (workspace: acme-corp)
+Token stored in ~/.config/swcli/credentials
+
+❯ swcli env init --name staging --region eu-west-1
+
+Fetching template list from https://api.synthwave.io/v1/templates ...
+✓ Environment "staging" created
+  ID:       env_01HX9MNTK4BVWZ3GRYQF5PD72J
+  Region:   eu-west-1
+  Endpoint: https://staging.acme-corp.synthwave.io
+
+❯ swcli deploy --env staging --ref main
+
+Resolving ref main → a3f8c2e1d09b74f65a21cc8e4d0b93f7282a1cd6e5f84017b3a9e2f6c0d81475
+Uploading artefacts to https://artefacts.synthwave.io/acme-corp/staging/ ...
+Build log: https://app.synthwave.io/builds/bld_7rK2mPxNqLvT4yUw
+
+  [1/4] Installing dependencies   ✓  12.3s
+  [2/4] Running tests              ✓   8.7s
+  [3/4] Building production bundle ✓  23.1s
+  [4/4] Deploying to edge nodes    ✓   4.2s
+
+✓ Deploy complete — https://staging.acme-corp.synthwave.io
+  Deployment ID: dep_9wX3nBzC1eAoTfGy6hKvMrQp
+
+❯ swcli env list
+
+NAME       REGION     STATUS    ENDPOINT
+staging    eu-west-1  healthy   https://staging.acme-corp.synthwave.io
+prod       us-east-1  healthy   https://acme-corp.synthwave.io
+preview    eu-west-1  sleeping  https://preview.acme-corp.synthwave.io
+
+❯ cat ~/.config/swcli/config.yaml
+
+workspace: acme-corp
+default_env: staging
+api_base:   https://api.synthwave.io/v1
+log_level:  info
+
+❯

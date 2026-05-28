@@ -681,8 +681,11 @@ impl State {
                 true
             }
             BareKey::Char(' ') if key.has_no_modifiers() => {
-                if self.anchor.is_some() {
-                    self.anchor = None;
+                if let Some(anchor) = self.anchor {
+                    // Swap: jump cursor to the anchor end, anchor the old cursor.
+                    self.anchor = Some(self.cursor);
+                    self.cursor = anchor;
+                    self.scroll_cursor_into_view();
                 } else {
                     self.anchor = Some(self.cursor);
                 }

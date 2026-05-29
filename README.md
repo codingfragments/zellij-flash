@@ -1,5 +1,7 @@
 # zellij-flash
 
+![zellij-flash demo](doc/demo.gif)
+
 A Zellij plugin for selecting and copying text from pane scrollback — with
 nvim-flash-style jump-to-word and jump-to-line navigation.
 

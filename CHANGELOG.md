@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-06-03
+
+### Fixed
+
+- **Jump partial-match highlighting**: when the typed prefix matches more positions than the label pool can cover, all matches are now highlighted (yellow by default) instead of showing nothing. The footer shows "N matches, keep typing…" to confirm the search is active.
+- **Jump label / continuation conflicts**: label characters no longer conflict with valid search continuations. If a next character is shared by two or more matches (e.g. both `word` and `worm` follow `wo` with `r`), that character is excluded from the label pool so typing it always narrows the search. If a next character is unique to one match, it is pre-assigned as that match's label and cannot appear on any other position.
+
+### Added
+
+- **`color_jump_partial_fg`** config key: separate highlight color for partial matches (too many to label). Defaults to yellow (`#eed49f`), visually distinct from the red labeled-match prefix highlight (`color_jump_match_fg`).
+- **`doc/jump-mode.md`**: detailed reference for the word-jump algorithm — matching rules, label states, assignment logic, rendering priority, and color config.
+- **Jump test fixture** (`fixtures/load-jump-test.sh`): five scenarios covering unique continuations, ambiguous continuations, mixed cases, partial flood, and EOL matches.
+
 ## [0.1.1] - 2026-05-20
 
 ### Fixed

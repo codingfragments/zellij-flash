@@ -1,0 +1,63 @@
+Jump-label behaviour tests
+══════════════════════════════════════════════════════════════════════════════
+
+SCENARIO A — unique continuations
+  Each "wo" word has a different next char → labels are the continuation chars.
+
+  wor   woa   won   wob   wox
+
+  Type s → wo
+  Expected: labels r→wor  a→woa  n→won  b→wob  x→wox
+
+──────────────────────────────────────────────────────────────────────────────
+
+SCENARIO B — ambiguous continuation
+  "word" and "worm" share continuation 'r' → 'r' must be excluded.
+  "woa" and "won" still have unique continuations.
+
+  word   worm   woa   won
+
+  Type s → wo
+  Expected: 'r' NOT a label (word+worm both start wor*)
+            'a' labels woa   'n' labels won
+
+──────────────────────────────────────────────────────────────────────────────
+
+SCENARIO C — mixed bag
+  card/care/cart share 'r'; cat/cab/can have unique continuations.
+
+  card   care   cart   cat   cab   can
+
+  Type s → ca
+  Expected: 'r' NOT a label (card, care, cart all start car*)
+            't' labels cat   'b' labels cab   'n' labels can
+
+──────────────────────────────────────────────────────────────────────────────
+
+SCENARIO D — partial match flood
+  Single char search produces far more matches than the label pool.
+  All matches highlight yellow; footer says "keep typing".
+
+  alpha   about   any   all   also   another   already   always   away
+  array   apply   after   at   above   among   across   again   alone
+  along   apart   area   ask   age   air   aim   act   add   art   aid
+
+  Type s → a
+  Expected: all 'a' occurrences highlight yellow (partial, no labels)
+
+  Type s → ab
+  Expected: fewer matches; labels may appear for about/above
+
+──────────────────────────────────────────────────────────────────────────────
+
+SCENARIO E — end-of-line match (no continuation)
+  "wo" at end of line has no next char → falls through to pool label.
+  Compare with wor/woa which get pre-assigned continuation labels.
+
+  wor   woa
+  wo
+
+  Type s → wo
+  Expected: 'r'→wor  'a'→woa  "wo" at EOL gets a pool label (not r or a)
+
+══════════════════════════════════════════════════════════════════════════════

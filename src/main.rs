@@ -902,37 +902,96 @@ impl State {
             return (Vec::new(), Vec::new());
         }
 
-        // Build label pool excluding typed chars (both cases) to prevent ambiguity.
+        // Build exclude set: all cases of typed characters.
         let exclude: std::collections::HashSet<char> = typed
             .chars()
             .flat_map(|c| [c.to_ascii_lowercase(), c.to_ascii_uppercase()])
             .collect();
+
+        // Compute the next character (continuation) after the typed prefix for
+        // each match. We use this to enforce two invariants:
+        //   1. A label char that equals a continuation of 2+ matches is excluded
+        //      entirely — typing it must narrow the search, never commit a jump.
+        //   2. A label char that equals the unique continuation of exactly one
+        //      match is pre-assigned to that specific match — it must not label
+        //      any other position.
+        let mut continuation_counts: std::collections::HashMap<char, usize> =
+            std::collections::HashMap::new();
+        // (line, jump_col) → lowercase continuation char
+        let mut match_continuation: std::collections::HashMap<(usize, usize), char> =
+            std::collections::HashMap::new();
+        for &(line_idx, jump_col, _) in &raw {
+            let line_chars: Vec<char> = self.lines[line_idx].chars().collect();
+            if let Some(&ch) = line_chars.get(jump_col + tlen) {
+                let c = ch.to_ascii_lowercase();
+                *continuation_counts.entry(c).or_insert(0) += 1;
+                match_continuation.insert((line_idx, jump_col), c);
+            }
+        }
+
+        // Pool excludes typed chars AND every continuation char (both cases).
+        // Continuations with count == 1 are pre-assigned directly; excluding
+        // them from the pool prevents them from landing on a different match.
+        let all_continuations: std::collections::HashSet<char> = continuation_counts
+            .keys()
+            .flat_map(|&c| [c.to_ascii_lowercase(), c.to_ascii_uppercase()])
+            .collect();
         let pool: Vec<char> = self
             .jump_labels
             .iter()
-            .filter(|&&c| !exclude.contains(&c))
+            .filter(|&&c| !exclude.contains(&c) && !all_continuations.contains(&c))
             .copied()
             .collect();
 
-        // Too many matches to assign labels: return raw positions as partial
-        // matches so the UI can highlight them without label glyphs.
-        if raw.len() > pool.len() {
+        // Separate matches into pre-labeled (unique continuation → that char is
+        // the label) and to-label (no continuation or ambiguous → pool label).
+        let mut pre_labeled: Vec<(usize, usize, usize, char)> = Vec::new();
+        let mut to_label: Vec<(usize, usize, usize)> = Vec::new();
+        for &(line_idx, jump_col, label_col) in &raw {
+            let cont = match_continuation.get(&(line_idx, jump_col)).copied();
+            let pre = cont.and_then(|c| {
+                if *continuation_counts.get(&c).unwrap_or(&0) == 1 {
+                    // Prefer lowercase label; fall back to uppercase.
+                    if self.jump_labels.contains(&c) && !exclude.contains(&c) {
+                        Some(c)
+                    } else {
+                        let cu = c.to_ascii_uppercase();
+                        if self.jump_labels.contains(&cu) && !exclude.contains(&cu) {
+                            Some(cu)
+                        } else {
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            });
+            match pre {
+                Some(lc) => pre_labeled.push((line_idx, jump_col, label_col, lc)),
+                None => to_label.push((line_idx, jump_col, label_col)),
+            }
+        }
+
+        // Too many non-pre-labeled matches to cover with the pool: fall back to
+        // partial-match highlighting (no labels at all).
+        if to_label.len() > pool.len() {
             return (Vec::new(), raw);
         }
 
-        // Sort by distance from cursor (line distance weighted heavier).
+        // Sort non-pre-labeled by distance from cursor; assign pool labels.
         let (cline, ccol) = self.cursor;
-        raw.sort_by_key(|&(line, col, _)| {
+        to_label.sort_by_key(|&(line, col, _)| {
             let dl = (line as isize - cline as isize).unsigned_abs();
             let dc = (col as isize - ccol as isize).unsigned_abs();
             dl * 10_000 + dc
         });
-
-        let labels = raw
-            .into_iter()
-            .zip(pool)
-            .map(|((line, jump_col, label_col), label)| (line, jump_col, label_col, label))
-            .collect();
+        let mut labels: Vec<(usize, usize, usize, char)> = pre_labeled;
+        labels.extend(
+            to_label
+                .into_iter()
+                .zip(pool)
+                .map(|((line, jump_col, label_col), lc)| (line, jump_col, label_col, lc)),
+        );
         (labels, Vec::new())
     }
 

@@ -40,6 +40,7 @@ struct Theme {
     jump_label_bg: Color,
     jump_label_fg: Color,
     jump_match_fg: Color,
+    jump_partial_fg: Color,
     search_match_bg: Color,
     search_current_bg: Color,
     search_fg: Color,
@@ -71,6 +72,7 @@ impl Default for Theme {
             jump_label_bg: peach,
             jump_label_fg: base,
             jump_match_fg: red,
+            jump_partial_fg: yellow,
             search_match_bg: green,
             search_current_bg: yellow,
             search_fg: base,
@@ -299,6 +301,7 @@ impl ZellijPlugin for State {
         apply_color!("color_jump_label_bg", self.theme.jump_label_bg);
         apply_color!("color_jump_label_fg", self.theme.jump_label_fg);
         apply_color!("color_jump_match_fg", self.theme.jump_match_fg);
+        apply_color!("color_jump_partial_fg", self.theme.jump_partial_fg);
         apply_color!("color_search_match_bg", self.theme.search_match_bg);
         apply_color!("color_search_current_bg", self.theme.search_current_bg);
         apply_color!("color_search_fg", self.theme.search_fg);
@@ -1826,6 +1829,9 @@ fn build_line_spans(
     let match_style = Style::default()
         .fg(theme.jump_match_fg)
         .add_modifier(Modifier::BOLD);
+    let partial_style = Style::default()
+        .fg(theme.jump_partial_fg)
+        .add_modifier(Modifier::BOLD);
     let search_style = Style::default()
         .bg(theme.search_match_bg)
         .fg(theme.search_fg);
@@ -1858,7 +1864,7 @@ fn build_line_spans(
                     i >= start && i <= label_col
                 });
             if in_partial {
-                return (ch, match_style);
+                return (ch, partial_style);
             }
             // 4. Cursor.
             if cursor_col == Some(i) {

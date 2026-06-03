@@ -50,8 +50,11 @@ size matches remain.
 **How it works:** matches are found case-insensitively in the visible lines. Labels
 are assigned by distance from the cursor (nearest first). The label character
 overlays the *last* char of the matched prefix so earlier chars stay visible to
-confirm the match. Label chars are chosen to never conflict with chars already
-typed. If a selection anchor is active, the jump extends the selection.
+confirm the match. Label chars are chosen to never conflict with typed chars or
+with valid search continuations. If a selection anchor is active, the jump
+extends the selection.
+
+See [`jump-mode.md`](jump-mode.md) for the full algorithm and color reference.
 
 ---
 

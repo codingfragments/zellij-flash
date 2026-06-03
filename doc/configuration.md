@@ -47,6 +47,7 @@ bind "S" {
         color_jump_label_bg   "#f5a97f"  // jump label background         (Peach)
         color_jump_label_fg   "#24273a"  // jump label foreground         (Base)
         color_jump_match_fg   "#ed8796"  // jump match prefix highlight   (Red)
+        color_jump_partial_fg "#eed49f"  // jump partial match highlight  (Yellow)
         color_search_match_bg "#a6da95"  // search match background       (Green)
         color_search_current_bg "#eed49f" // current search match bg      (Yellow)
         color_search_fg       "#24273a"  // search match foreground       (Base)
@@ -75,6 +76,7 @@ bind "S" {
 | `color_jump_label_bg` | `"#f5a97f"` | Jump label background. |
 | `color_jump_label_fg` | `"#24273a"` | Jump label foreground. |
 | `color_jump_match_fg` | `"#ed8796"` | Jump matched-prefix highlight color. |
+| `color_jump_partial_fg` | `"#eed49f"` | Jump partial-match highlight (too many to label). |
 | `color_search_match_bg` | `"#a6da95"` | Non-current search match background. |
 | `color_search_current_bg` | `"#eed49f"` | Current search match background. |
 | `color_search_fg` | `"#24273a"` | Search match foreground. |

@@ -591,7 +591,12 @@ impl State {
         let only_shift = key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1;
 
         // Jump mode: typing narrows matches; label key jumps cursor.
-        if let Mode::Jump { typed, labels, partial_matches } = self.mode.clone() {
+        if let Mode::Jump {
+            typed,
+            labels,
+            partial_matches,
+        } = self.mode.clone()
+        {
             return self.handle_key_jump(key, typed, labels, partial_matches);
         }
 
@@ -822,7 +827,11 @@ impl State {
             BareKey::Backspace => {
                 typed.pop();
                 let (labels, partial_matches) = self.compute_jump_labels(&typed);
-                self.mode = Mode::Jump { typed, labels, partial_matches };
+                self.mode = Mode::Jump {
+                    typed,
+                    labels,
+                    partial_matches,
+                };
                 return true;
             }
             BareKey::Char(c) => {
@@ -844,7 +853,11 @@ impl State {
                 {
                     typed.push(c);
                     let (labels, partial_matches) = self.compute_jump_labels(&typed);
-                    self.mode = Mode::Jump { typed, labels, partial_matches };
+                    self.mode = Mode::Jump {
+                        typed,
+                        labels,
+                        partial_matches,
+                    };
                     return true;
                 }
             }
@@ -1399,7 +1412,12 @@ impl State {
         let (jump_labels, jump_partial): (
             &[(usize, usize, usize, char)],
             &[(usize, usize, usize)],
-        ) = if let Mode::Jump { ref labels, ref partial_matches, .. } = self.mode {
+        ) = if let Mode::Jump {
+            ref labels,
+            ref partial_matches,
+            ..
+        } = self.mode
+        {
             (labels, partial_matches)
         } else {
             (&[], &[])
@@ -1516,7 +1534,11 @@ impl State {
                     .filter(|&&(l, _, _)| l == abs)
                     .filter_map(|&(_, _, label_col)| {
                         let disp = label_col.saturating_sub(scroll_x);
-                        if disp < visible_w { Some(disp) } else { None }
+                        if disp < visible_w {
+                            Some(disp)
+                        } else {
+                            None
+                        }
                     })
                     .collect();
 
@@ -1668,9 +1690,18 @@ impl State {
                 Span::styled("Esc", bold),
                 Span::raw(":cancel"),
             ])
-        } else if let Mode::Jump { typed, labels, partial_matches } = &self.mode {
+        } else if let Mode::Jump {
+            typed,
+            labels,
+            partial_matches,
+        } = &self.mode
+        {
             let hint = if !partial_matches.is_empty() {
-                format!("jump: {}  ({} matches, keep typing…)", typed, partial_matches.len())
+                format!(
+                    "jump: {}  ({} matches, keep typing…)",
+                    typed,
+                    partial_matches.len()
+                )
             } else if labels.is_empty() && !typed.is_empty() {
                 format!("jump: {}  (no matches)", typed)
             } else if labels.is_empty() {

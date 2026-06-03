@@ -138,9 +138,12 @@ enum Mode {
     /// from cursor. `jump_col` is the match start; `label_col` is where the
     /// label glyph is rendered (last char of the prefix, clamped to the last
     /// real character so EOL matches don't render past the line end).
+    /// `partial_matches` = (line, jump_col, label_col) for matches when there
+    /// are too many to assign labels; highlighted but not jumpable.
     Jump {
         typed: String,
         labels: Vec<(usize, usize, usize, char)>,
+        partial_matches: Vec<(usize, usize, usize)>,
     },
     /// Line-jump: every visible line gets a gutter label immediately.
     /// `labels` = (line_idx, label_char), sorted by distance from cursor.
@@ -585,8 +588,8 @@ impl State {
         let only_shift = key.has_modifiers(&[KeyModifier::Shift]) && key.key_modifiers.len() == 1;
 
         // Jump mode: typing narrows matches; label key jumps cursor.
-        if let Mode::Jump { typed, labels } = self.mode.clone() {
-            return self.handle_key_jump(key, typed, labels);
+        if let Mode::Jump { typed, labels, partial_matches } = self.mode.clone() {
+            return self.handle_key_jump(key, typed, labels, partial_matches);
         }
 
         // Search mode.
@@ -695,6 +698,7 @@ impl State {
                 self.mode = Mode::Jump {
                     typed: String::new(),
                     labels: Vec::new(),
+                    partial_matches: Vec::new(),
                 };
                 true
             }
@@ -805,6 +809,7 @@ impl State {
         key: KeyWithModifier,
         mut typed: String,
         labels: Vec<(usize, usize, usize, char)>,
+        _partial_matches: Vec<(usize, usize, usize)>,
     ) -> bool {
         match key.bare_key {
             BareKey::Esc => {
@@ -813,8 +818,8 @@ impl State {
             }
             BareKey::Backspace => {
                 typed.pop();
-                let labels = self.compute_jump_labels(&typed);
-                self.mode = Mode::Jump { typed, labels };
+                let (labels, partial_matches) = self.compute_jump_labels(&typed);
+                self.mode = Mode::Jump { typed, labels, partial_matches };
                 return true;
             }
             BareKey::Char(c) => {
@@ -835,8 +840,8 @@ impl State {
                             && key.key_modifiers.len() == 1))
                 {
                     typed.push(c);
-                    let labels = self.compute_jump_labels(&typed);
-                    self.mode = Mode::Jump { typed, labels };
+                    let (labels, partial_matches) = self.compute_jump_labels(&typed);
+                    self.mode = Mode::Jump { typed, labels, partial_matches };
                     return true;
                 }
             }
@@ -845,9 +850,13 @@ impl State {
         true
     }
 
-    fn compute_jump_labels(&self, typed: &str) -> Vec<(usize, usize, usize, char)> {
+    #[allow(clippy::type_complexity)]
+    fn compute_jump_labels(
+        &self,
+        typed: &str,
+    ) -> (Vec<(usize, usize, usize, char)>, Vec<(usize, usize, usize)>) {
         if typed.is_empty() {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
 
         let typed_lower: Vec<char> = typed.to_lowercase().chars().collect();
@@ -886,17 +895,9 @@ impl State {
         raw.sort_unstable();
         raw.dedup();
 
-        if raw.is_empty() || raw.len() > self.jump_labels.len() {
-            return Vec::new();
+        if raw.is_empty() {
+            return (Vec::new(), Vec::new());
         }
-
-        // Sort by distance from cursor (line distance weighted heavier).
-        let (cline, ccol) = self.cursor;
-        raw.sort_by_key(|&(line, col, _)| {
-            let dl = (line as isize - cline as isize).unsigned_abs();
-            let dc = (col as isize - ccol as isize).unsigned_abs();
-            dl * 10_000 + dc
-        });
 
         // Build label pool excluding typed chars (both cases) to prevent ambiguity.
         let exclude: std::collections::HashSet<char> = typed
@@ -910,10 +911,26 @@ impl State {
             .copied()
             .collect();
 
-        raw.into_iter()
+        // Too many matches to assign labels: return raw positions as partial
+        // matches so the UI can highlight them without label glyphs.
+        if raw.len() > pool.len() {
+            return (Vec::new(), raw);
+        }
+
+        // Sort by distance from cursor (line distance weighted heavier).
+        let (cline, ccol) = self.cursor;
+        raw.sort_by_key(|&(line, col, _)| {
+            let dl = (line as isize - cline as isize).unsigned_abs();
+            let dc = (col as isize - ccol as isize).unsigned_abs();
+            dl * 10_000 + dc
+        });
+
+        let labels = raw
+            .into_iter()
             .zip(pool)
             .map(|((line, jump_col, label_col), label)| (line, jump_col, label_col, label))
-            .collect()
+            .collect();
+        (labels, Vec::new())
     }
 
     fn jump_to(&mut self, line: usize, col: usize) {
@@ -1316,12 +1333,15 @@ impl State {
         let sel = self.selection_range();
 
         // Collect jump labels for this frame (empty when not in Jump mode).
-        let jump_labels: &[(usize, usize, usize, char)] =
-            if let Mode::Jump { ref labels, .. } = self.mode {
-                labels
-            } else {
-                &[]
-            };
+        #[allow(clippy::type_complexity)]
+        let (jump_labels, jump_partial): (
+            &[(usize, usize, usize, char)],
+            &[(usize, usize, usize)],
+        ) = if let Mode::Jump { ref labels, ref partial_matches, .. } = self.mode {
+            (labels, partial_matches)
+        } else {
+            (&[], &[])
+        };
 
         // Line-jump labels: (line_idx, label_char) for gutter replacement.
         let line_jump_labels: &[(usize, char)] = if let Mode::LineJump { ref labels } = self.mode {
@@ -1429,6 +1449,15 @@ impl State {
                     })
                     .collect();
 
+                let line_partial: Vec<usize> = jump_partial
+                    .iter()
+                    .filter(|&&(l, _, _)| l == abs)
+                    .filter_map(|&(_, _, label_col)| {
+                        let disp = label_col.saturating_sub(scroll_x);
+                        if disp < visible_w { Some(disp) } else { None }
+                    })
+                    .collect();
+
                 // Search matches on this line in display coords (col, is_current).
                 let line_search: Vec<(usize, bool)> = search_all
                     .iter()
@@ -1457,6 +1486,7 @@ impl State {
                     cur_col,
                     &line_labels,
                     typed_len,
+                    &line_partial,
                     &line_search,
                     search_qlen,
                     &self.theme,
@@ -1576,8 +1606,10 @@ impl State {
                 Span::styled("Esc", bold),
                 Span::raw(":cancel"),
             ])
-        } else if let Mode::Jump { typed, labels } = &self.mode {
-            let hint = if labels.is_empty() && !typed.is_empty() {
+        } else if let Mode::Jump { typed, labels, partial_matches } = &self.mode {
+            let hint = if !partial_matches.is_empty() {
+                format!("jump: {}  ({} matches, keep typing…)", typed, partial_matches.len())
+            } else if labels.is_empty() && !typed.is_empty() {
                 format!("jump: {}  (no matches)", typed)
             } else if labels.is_empty() {
                 "jump: type to search…".to_string()
@@ -1761,15 +1793,18 @@ fn sel_range_for_line(
 /// Build ratatui spans for one line of content.
 ///
 /// Priority per character cell (highest wins):
-///   1. Jump label position   → label char + label style
-///   2. Cursor cell           → cursor style (inverted)
-///   3. Selection range       → selection style
-///   4. Jump match highlight  → match chars after label dimly highlighted
-///   5. Normal text
+///   1. Jump label position      → label char + label style
+///   2. Jump prefix match chars  → match_style (red/bold) for chars before label
+///   3. Partial match chars      → match_style for all typed chars when too many to label
+///   4. Cursor cell              → cursor style (inverted)
+///   5. Current search match     → search current style
+///   6. Selection range          → selection style
+///   7. Normal text
 ///
 /// `line_labels`: (col, label_char) pairs for labels on this line.
-/// `typed_len`: length of the current jump search string (chars after the
-///   label are the matched prefix and get a dim highlight).
+/// `typed_len`: length of the current jump search string.
+/// `line_partial`: display-coord label_col positions for partial matches
+///   (matches with no label assigned because there are too many).
 #[allow(clippy::too_many_arguments)]
 fn build_line_spans(
     chars: &[char],
@@ -1777,6 +1812,7 @@ fn build_line_spans(
     cursor_col: Option<usize>,
     line_labels: &[(usize, char)],
     typed_len: usize,
+    line_partial: &[usize],
     search_matches: &[(usize, bool)], // (display_col, is_current)
     search_len: usize,
     theme: &Theme,
@@ -1806,7 +1842,7 @@ fn build_line_spans(
             if let Some(&(_, lc)) = line_labels.iter().find(|&&(lc, _)| lc == i) {
                 return (lc, label_style);
             }
-            // 2. Jump prefix match chars.
+            // 2. Jump prefix match chars (labeled matches: chars before the label).
             let in_jump_match = typed_len > 1
                 && line_labels.iter().any(|&(label_col, _)| {
                     let start = label_col.saturating_sub(typed_len - 1);
@@ -1815,7 +1851,16 @@ fn build_line_spans(
             if in_jump_match {
                 return (ch, match_style);
             }
-            // 3. Cursor.
+            // 3. Partial match chars (too many matches to label: highlight all typed chars).
+            let in_partial = typed_len > 0
+                && line_partial.iter().any(|&label_col| {
+                    let start = label_col.saturating_sub(typed_len - 1);
+                    i >= start && i <= label_col
+                });
+            if in_partial {
+                return (ch, match_style);
+            }
+            // 4. Cursor.
             if cursor_col == Some(i) {
                 return (ch, cursor_style);
             }

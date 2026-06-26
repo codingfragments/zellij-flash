@@ -146,11 +146,15 @@ enum Mode {
         typed: String,
         labels: Vec<(usize, usize, usize, char)>,
         partial_matches: Vec<(usize, usize, usize)>,
+        /// When true (triggered by S), plant anchor at jump destination.
+        start_selection: bool,
     },
     /// Line-jump: every visible line gets a gutter label immediately.
     /// `labels` = (line_idx, label_char), sorted by distance from cursor.
     LineJump {
         labels: Vec<(usize, char)>,
+        /// When true (triggered by L), plant anchor at jump destination.
+        start_selection: bool,
     },
     /// Waiting for `y`/Enter/Esc before inserting multi-line text.
     Confirm {
@@ -595,9 +599,10 @@ impl State {
             typed,
             labels,
             partial_matches,
+            start_selection,
         } = self.mode.clone()
         {
-            return self.handle_key_jump(key, typed, labels, partial_matches);
+            return self.handle_key_jump(key, typed, labels, partial_matches, start_selection);
         }
 
         // Search mode.
@@ -612,8 +617,12 @@ impl State {
         }
 
         // Line-jump mode: label key jumps to that line.
-        if let Mode::LineJump { labels } = self.mode.clone() {
-            return self.handle_key_line_jump(key, labels);
+        if let Mode::LineJump {
+            labels,
+            start_selection,
+        } = self.mode.clone()
+        {
+            return self.handle_key_line_jump(key, labels, start_selection);
         }
 
         // Confirm mode: waiting for y/Esc before inserting multi-line text.
@@ -707,12 +716,33 @@ impl State {
                     typed: String::new(),
                     labels: Vec::new(),
                     partial_matches: Vec::new(),
+                    start_selection: false,
+                };
+                true
+            }
+            BareKey::Char('s') if only_shift => {
+                self.mode = Mode::Jump {
+                    typed: String::new(),
+                    labels: Vec::new(),
+                    partial_matches: Vec::new(),
+                    start_selection: true,
                 };
                 true
             }
             BareKey::Char('l') if key.has_no_modifiers() => {
                 let labels = self.compute_line_labels();
-                self.mode = Mode::LineJump { labels };
+                self.mode = Mode::LineJump {
+                    labels,
+                    start_selection: false,
+                };
+                true
+            }
+            BareKey::Char('l') if only_shift => {
+                let labels = self.compute_line_labels();
+                self.mode = Mode::LineJump {
+                    labels,
+                    start_selection: true,
+                };
                 true
             }
             // ── Word motions (work in and out of selection) ───────────────────
@@ -818,6 +848,7 @@ impl State {
         mut typed: String,
         labels: Vec<(usize, usize, usize, char)>,
         _partial_matches: Vec<(usize, usize, usize)>,
+        start_selection: bool,
     ) -> bool {
         match key.bare_key {
             BareKey::Esc => {
@@ -831,6 +862,7 @@ impl State {
                     typed,
                     labels,
                     partial_matches,
+                    start_selection,
                 };
                 return true;
             }
@@ -841,6 +873,9 @@ impl State {
                         labels.iter().find(|&&(_, _, _, lc)| lc == c)
                     {
                         self.jump_to(line, jump_col);
+                        if start_selection {
+                            self.anchor = Some(self.cursor);
+                        }
                         self.mode = Mode::Normal;
                         return true;
                     }
@@ -857,6 +892,7 @@ impl State {
                         typed,
                         labels,
                         partial_matches,
+                        start_selection,
                     };
                     return true;
                 }
@@ -1334,7 +1370,12 @@ impl State {
         labels
     }
 
-    fn handle_key_line_jump(&mut self, key: KeyWithModifier, labels: Vec<(usize, char)>) -> bool {
+    fn handle_key_line_jump(
+        &mut self,
+        key: KeyWithModifier,
+        labels: Vec<(usize, char)>,
+        start_selection: bool,
+    ) -> bool {
         match key.bare_key {
             BareKey::Esc => {
                 self.mode = Mode::Normal;
@@ -1345,6 +1386,9 @@ impl State {
                     // Preserve col if it fits on the target line, else clamp to 0.
                     let col = self.cursor.1.min(self.line_len(line));
                     self.jump_to(line, col);
+                    if start_selection {
+                        self.anchor = Some(self.cursor);
+                    }
                     self.mode = Mode::Normal;
                 } else {
                     self.mode = Mode::Normal;
@@ -1424,11 +1468,12 @@ impl State {
         };
 
         // Line-jump labels: (line_idx, label_char) for gutter replacement.
-        let line_jump_labels: &[(usize, char)] = if let Mode::LineJump { ref labels } = self.mode {
-            labels
-        } else {
-            &[]
-        };
+        let line_jump_labels: &[(usize, char)] =
+            if let Mode::LineJump { ref labels, .. } = self.mode {
+                labels
+            } else {
+                &[]
+            };
 
         // Search highlights: collect (line, col, is_current) from Search mode.
         let (search_all, search_current_idx, search_qlen) = if let Mode::Search {
@@ -1677,11 +1722,16 @@ impl State {
                     Span::raw(":cancel"),
                 ])
             }
-        } else if let Mode::LineJump { labels } = &self.mode {
+        } else if let Mode::LineJump {
+            labels,
+            start_selection,
+        } = &self.mode
+        {
+            let prefix = if *start_selection { "[SEL] " } else { "" };
             Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
-                    format!("line jump — {} lines labeled", labels.len()),
+                    format!("{}line jump — {} lines labeled", prefix, labels.len()),
                     Style::default()
                         .fg(self.theme.jump_label_bg)
                         .add_modifier(Modifier::BOLD),
@@ -1694,20 +1744,23 @@ impl State {
             typed,
             labels,
             partial_matches,
+            start_selection,
         } = &self.mode
         {
+            let prefix = if *start_selection { "[SEL] " } else { "" };
             let hint = if !partial_matches.is_empty() {
                 format!(
-                    "jump: {}  ({} matches, keep typing…)",
+                    "{}jump: {}  ({} matches, keep typing…)",
+                    prefix,
                     typed,
                     partial_matches.len()
                 )
             } else if labels.is_empty() && !typed.is_empty() {
-                format!("jump: {}  (no matches)", typed)
+                format!("{}jump: {}  (no matches)", prefix, typed)
             } else if labels.is_empty() {
-                "jump: type to search…".to_string()
+                format!("{}jump: type to search…", prefix)
             } else {
-                format!("jump: {}  ({} matches)", typed, labels.len())
+                format!("{}jump: {}  ({} matches)", prefix, typed, labels.len())
             };
             Line::from(vec![
                 Span::raw(" "),

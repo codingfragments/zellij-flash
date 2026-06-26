@@ -1468,11 +1468,12 @@ impl State {
         };
 
         // Line-jump labels: (line_idx, label_char) for gutter replacement.
-        let line_jump_labels: &[(usize, char)] = if let Mode::LineJump { ref labels, .. } = self.mode {
-            labels
-        } else {
-            &[]
-        };
+        let line_jump_labels: &[(usize, char)] =
+            if let Mode::LineJump { ref labels, .. } = self.mode {
+                labels
+            } else {
+                &[]
+            };
 
         // Search highlights: collect (line, col, is_current) from Search mode.
         let (search_all, search_current_idx, search_qlen) = if let Mode::Search {

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-06-26
+
+### Added
+
+- **Select-jump (`S`) and select-line-jump (`L`)**: uppercase variants of the jump keybinds (`s` and `l`) that perform the same jump but also plant the selection anchor at the destination on completion. After landing, the cursor is free to move and extend the selection normally. The footer shows a `[SEL]` prefix while the jump UI is active to signal that selection will start. `Esc` during the jump leaves any existing selection untouched.
+
 ## [0.1.2] - 2026-06-03
 
 ### Fixed

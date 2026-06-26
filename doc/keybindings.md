@@ -22,7 +22,9 @@ All keys active inside the zellij-flash float.
 | `$` | Last character of line |
 | `Space` | Set selection anchor at cursor (press again to clear) |
 | `s` | Enter word-jump mode |
+| `S` | Enter word-jump mode — plants selection anchor at destination on completion |
 | `l` | Enter line-jump mode |
+| `L` | Enter line-jump mode — plants selection anchor at destination on completion |
 | `/` | Enter search mode (no-op while selection anchor is active) |
 | `g` | Cycle to next scrollback depth profile |
 | `Enter` | Copy selection to clipboard and close (warn if no selection) |
@@ -35,10 +37,14 @@ extends the selection.
 
 ---
 
-## Word-jump mode (`s`)
+## Word-jump mode (`s` / `S`)
 
-Press `s` to enter. Type chars to narrow matches; labels appear when ≤ label-pool
-size matches remain.
+Press `s` to enter. Press `S` to enter with select-jump: on completion the
+selection anchor is planted at the destination (zero-width), ready to extend.
+The footer shows `[SEL]` while in select-jump mode. `Esc` cancels without
+touching the anchor.
+
+Type chars to narrow matches; labels appear when ≤ label-pool size matches remain.
 
 | Key | Action |
 |---|---|
@@ -58,9 +64,14 @@ See [`jump-mode.md`](jump-mode.md) for the full algorithm and color reference.
 
 ---
 
-## Line-jump mode (`l`)
+## Line-jump mode (`l` / `L`)
 
-Press `l` to enter. Labels appear instantly on every visible line.
+Press `l` to enter. Press `L` to enter with select-jump: on completion the
+selection anchor is planted at the destination (zero-width), ready to extend.
+The footer shows `[SEL]` while in select-jump mode. `Esc` cancels without
+touching the anchor.
+
+Labels appear instantly on every visible line.
 
 | Key | Action |
 |---|---|

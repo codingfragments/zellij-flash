@@ -63,7 +63,9 @@ with relative line numbers (cursor row = 0, other rows show distance).
 | `PgUp / PgDn` | Half-page jump, cursor re-centers |
 | `Space` | Anchor / clear selection |
 | `s` | Word jump — type chars, pick a label |
+| `S` | Word jump + start selection at destination |
 | `l` | Line jump — pick a line label |
+| `L` | Line jump + start selection at destination |
 | `g` | Cycle scrollback depth |
 | `Enter` | Copy selection to clipboard, close |
 | `Shift-Enter` | Insert selection into source pane, close |

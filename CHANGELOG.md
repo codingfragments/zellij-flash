@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-06-29
+
+### Fixed
+
+- **`S` / `L` select-jump keys not working on standard terminals**: the original implementation only matched `BareKey::Char('s'/'l') + Shift` (kitty keyboard protocol). Standard terminals send Shift+letter as an uppercase character with no modifier. Added `BareKey::Char('S')` and `BareKey::Char('L')` arms, matching the same pattern already used by the `W`, `B`, and `E` word-motion keys.
+
 ## [0.2.0] - 2026-06-26
 
 ### Added

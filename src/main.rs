@@ -729,6 +729,15 @@ impl State {
                 };
                 true
             }
+            BareKey::Char('S') if key.has_no_modifiers() || only_shift => {
+                self.mode = Mode::Jump {
+                    typed: String::new(),
+                    labels: Vec::new(),
+                    partial_matches: Vec::new(),
+                    start_selection: true,
+                };
+                true
+            }
             BareKey::Char('l') if key.has_no_modifiers() => {
                 let labels = self.compute_line_labels();
                 self.mode = Mode::LineJump {
@@ -738,6 +747,14 @@ impl State {
                 true
             }
             BareKey::Char('l') if only_shift => {
+                let labels = self.compute_line_labels();
+                self.mode = Mode::LineJump {
+                    labels,
+                    start_selection: true,
+                };
+                true
+            }
+            BareKey::Char('L') if key.has_no_modifiers() || only_shift => {
                 let labels = self.compute_line_labels();
                 self.mode = Mode::LineJump {
                     labels,
